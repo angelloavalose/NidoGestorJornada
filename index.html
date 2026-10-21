@@ -1,0 +1,4173 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NidoGestor Jornada</title>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'DM Sans', 'Segoe UI', sans-serif; background: #F5F5F5; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #F5F5F5; }
+    ::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 3px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    /* Tablas grandes: encabezado fijo al bajar y primeras columnas fijas al moverse a la derecha */
+    .tabla-fija { max-height: calc(100vh - 170px); overflow: auto; }
+    .tabla-fija thead th { position: sticky; top: 0; z-index: 3; background: #F9FAFB !important; box-shadow: inset 0 -1px 0 #E5E7EB; }
+    .tabla-fija td { white-space: nowrap; }
+    .tabla-fija.fija-1 tbody td:nth-child(1), .tabla-fija.fija-2 tbody td:nth-child(1), .tabla-fija.fija-2 tbody td:nth-child(2) { position: sticky; z-index: 2; background: inherit; }
+    .tabla-fija.fija-1 thead th:nth-child(1), .tabla-fija.fija-2 thead th:nth-child(1), .tabla-fija.fija-2 thead th:nth-child(2) { z-index: 4; }
+    .tabla-fija.fija-1 tr > :nth-child(1), .tabla-fija.fija-2 tr > :nth-child(1) { position: sticky; left: 0; }
+    .tabla-fija.fija-2 tr > :nth-child(1) { min-width: 64px; width: 64px; max-width: 64px; }
+    .tabla-fija.fija-2 tr > :nth-child(2) { position: sticky; left: 64px; box-shadow: inset -1px 0 0 #E5E7EB; }
+    .tabla-fija.fija-1 tbody td:nth-child(1) { box-shadow: inset -1px 0 0 #E5E7EB; }
+    .tabla-fija tbody tr { background: #fff; }
+    @media print {
+      @page { size: A4 landscape; margin: 8mm; }
+      .no-print { display: none !important; }
+      html, body, #root, .app-root, .app-main { height: auto !important; overflow: visible !important; display: block !important; background: #fff !important; }
+      .app-main * { overflow: visible !important; max-height: none !important; }
+      body { zoom: 0.72; }
+      * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      tr { page-break-inside: avoid; }
+      .tabla-fija th, .tabla-fija td { position: static !important; }
+    }
+    button { transition: opacity 0.15s; }
+    button:hover { opacity: 0.85; }
+    input:focus, select:focus { outline: 1.5px solid #1A5C2E; outline-offset: 1px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/javascript">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const {
+  useState,
+  useMemo,
+  useCallback,
+  useRef,
+  useEffect
+} = React;
+
+// ─── CONSTANTES ──────────────────────────────────────────────────────────────
+const C = {
+  bg: "#F5F5F5",
+  surface: "#FFFFFF",
+  surfaceHigh: "#F9FAFB",
+  border: "#E5E7EB",
+  accent: "#1A5C2E",
+  accentDark: "#12391F",
+  texto: "#111827",
+  textoMuted: "#9CA3AF",
+  textoSec: "#6B7280",
+  danger: "#DC2626",
+  warning: "#D97706",
+  info: "#1D4ED8",
+  ok: "#16A34A"
+};
+const BRD = `0.5px solid ${C.border}`;
+const GER_COLOR = {
+  "GESTIÓN HUMANA": "#4A148C",
+  "CALIDAD": "#1B5E20",
+  "ADMINISTRACIÓN Y FINANZAS": "#1A237E",
+  "DIRECCIÓN": "#37474F",
+  "CANAL TRADICIONAL": "#B71C1B",
+  "CANAL MODERNO": "#E65100"
+};
+const DIAS_SEMANA = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+const ESTADO_STYLE = {
+  OK:        {bg:"#F0FDF4", color:"#15803D", label:"Marc. completa"},
+  TARDANZA:  {bg:"#FEF3C7", color:"#92400E", label:"Tardanza"},
+  ANTICIPADA:{bg:"#FED7AA", color:"#7C2D12", label:"Sal. anticipada"},
+  TARD_ANTIC:{bg:"#FEE2E2", color:"#991B1B", label:"Tard.+Antic."},
+  SIN_MARC:  {bg:"#FEE2E2", color:"#991B1B", label:"Sin marcación"},
+  MARC_INC:  {bg:"#DBEAFE", color:"#1E40AF", label:"Marc. incompleta"},
+  FERIADO:   {bg:"#F3F4F6", color:"#6B7280", label:"Feriado"},
+  ABSENTISMO:{bg:"#EDE9FE", color:"#5B21B6", label:"Absentismo"},
+  DESCANSO:  {bg:"#F3F4F6", color:"#D1D5DB", label:"Descanso"},
+  REMOTO:    {bg:"#D1FAE5", color:"#065F46", label:"Remoto"},
+  TARD_TOL:  {bg:"#FEF9C3", color:"#854D0E", label:"Tard. tolerada"},
+  DESC_TRAB: {bg:"#E0F2FE", color:"#075985", label:"Descanso trabajado"},
+  FER_TRAB:  {bg:"#E0F2FE", color:"#075985", label:"Feriado trabajado"},
+};
+
+// ─── UTILS ───────────────────────────────────────────────────────────────────
+function fmtH(h) {
+  if (h === null || h === undefined || isNaN(h)) return "—";
+  const neg = h < 0;
+  const abs = Math.abs(h);
+  const hh = Math.floor(abs);
+  const mm = Math.round((abs - hh) * 60);
+  return `${neg ? "-" : ""}${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")}`;
+}
+function fmtMin(m) {
+  if (!m || m <= 0) return "—";
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+// Celda de minutos en tablas diarias: valor, "00:00" si el día aplica y es cero, "—" si no aplica (descanso, feriado, absentismo)
+function minDia(d, campo) {
+  const v = d[campo] || 0;
+  if (v > 0) return fmtMin(v);
+  if (["DESCANSO", "FERIADO", "ABSENTISMO"].includes(d.estado)) return "—";
+  if ((d.estado === "DESC_TRAB" || d.estado === "FER_TRAB") && campo !== "trab_min") return "—";
+  return "00:00";
+}
+function minToHHMM(m) {
+  if (m === null || m === undefined) return "—";
+  const mReal = m >= 1440 ? m % 1440 : m; // turno nocturno: mostrar hora real del día
+  return `${String(Math.floor(mReal / 60)).padStart(2, "0")}:${String(mReal % 60).padStart(2, "0")}`;
+}
+function fmtPct(p) {
+  return `${parseFloat(p || 0).toFixed(1)}%`;
+}
+function fmtFecha(d) {
+  if (!d) return "—";
+  const dt = new Date(d + "T12:00:00");
+  return `${String(dt.getDate()).padStart(2, "0")}/${String(dt.getMonth() + 1).padStart(2, "0")}/${dt.getFullYear()}`;
+}
+function fmtFechaCorta(d) {
+  if (!d) return "—";
+  const dt = new Date(d + "T12:00:00");
+  return `${String(dt.getDate()).padStart(2, "0")}/${String(dt.getMonth() + 1).padStart(2, "0")}`;
+}
+
+// ─── PARSERS ─────────────────────────────────────────────────────────────────
+function excelDateToISO(val) {
+  if (!val && val !== 0) return null;
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return null;
+    const y = val.getUTCFullYear(),
+      m = val.getUTCMonth() + 1,
+      d = val.getUTCDate();
+    if (y < 2000 || y > 2100) return null;
+    return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  }
+  if (typeof val === "number" && val > 1 && val < 60000) {
+    const ms = (val - 25569) * 86400000;
+    const d = new Date(ms);
+    const y = d.getUTCFullYear(),
+      mo = d.getUTCMonth() + 1,
+      dy = d.getUTCDate();
+    if (y < 2000 || y > 2100) return null;
+    return `${y}-${String(mo).padStart(2, "0")}-${String(dy).padStart(2, "0")}`;
+  }
+  if (typeof val === "string") {
+    const m = val.match(/^(\d{4})-(\d{2})-(\d{2})T/);
+    if (m && parseInt(m[1]) > 2000) return `${m[1]}-${m[2]}-${m[3]}`;
+    const m2 = val.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m2 && parseInt(m2[1]) > 2000) return `${m2[1]}-${m2[2]}-${m2[3]}`;
+  }
+  return null;
+}
+function parseTimeToMin(val) {
+  if (val === null || val === undefined || val === "") return null;
+  if (val instanceof Date) return val.getHours() * 60 + val.getMinutes();
+  if (typeof val === "number") {
+    if (val > 0 && val < 1) return Math.round(val * 1440);
+    return null;
+  }
+  const s = String(val).trim();
+  if (!s || s === "NaN" || s === "-" || s === "null") return null;
+  const m = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+  if (m) {
+    let h = parseInt(m[1]),
+      mm = parseInt(m[2]);
+    if (m[4] && m[4].toUpperCase() === "PM" && h < 12) h += 12;
+    return h * 60 + mm;
+  }
+  return null;
+}
+// Déficit 48h por período (hasta la fecha de corte):
+// (días hábiles × 48h / días que trabaja por semana) − H.Debidas
+// Días hábiles = días programados sin absentismo, feriado ni descanso
+// Absentismo injustificado (falta, inasistencia, suspensión): no justifica el día → cuenta como deuda
+function esAbsInjustificado(txt) {
+  const s = String(txt || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return s.includes("injustific") || s.includes("inasist") || s.includes("suspens") || (s.includes("falta") && !s.includes("justific"));
+}
+function semanaLunes(fecha) {
+  const dt = new Date(fecha + "T12:00:00");
+  const dow = (dt.getDay() + 6) % 7; // 0 = lunes
+  dt.setDate(dt.getDate() - dow);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+// Días que trabaja por semana según su programación (semana completa más frecuente)
+function calcDiasSemana(fechas, prog) {
+  // Semanas completas (lun-dom): firma de qué días de la semana tiene programados
+  const sem = {};
+  fechas.forEach(f => {
+    const k = semanaLunes(f);
+    if (!sem[k]) sem[k] = { dias: 0, prog: 0, firma: [] };
+    sem[k].dias++;
+    const hor = prog[f];
+    if (hor && hor.tipo !== "DESCANSO") { sem[k].prog++; sem[k].firma.push((new Date(f + "T12:00:00").getDay() + 6) % 7); }
+  });
+  const comp = Object.values(sem).filter(s => s.dias === 7 && s.prog > 0);
+  if (comp.length) {
+    const firmas = {};
+    comp.forEach(s => { const f = s.firma.sort().join(","); firmas[f] = (firmas[f] || 0) + 1; });
+    const [fTop, nTop] = Object.entries(firmas).sort((a, b) => b[1] - a[1])[0];
+    // Horario fijo: la misma semana se repite en ≥75% de las semanas completas → sus días
+    if (nTop / comp.length >= 0.75) return fTop.split(",").length;
+    // Turno rotativo (ej. 4x2): promedio de días programados por semana completa
+    return parseFloat((comp.reduce((s, x) => s + x.prog, 0) / comp.length).toFixed(2));
+  }
+  let totD = 0, totP = 0;
+  Object.values(sem).forEach(s => { totD += s.dias; totP += s.prog; });
+  return totD > 0 ? Math.max(1, Math.min(7, Math.round(totP / totD * 7))) : 5;
+}
+function calcDeficit48(tareoArr, diasSem) {
+  const ds = diasSem || 5;
+  let hab = 0, prog = 0;
+  (tareoArr || []).forEach(d => {
+    const pd = d.progDef || 0;
+    if (pd <= 0) return;
+    if (["ABSENTISMO", "FERIADO", "DESCANSO", "FER_TRAB", "DESC_TRAB"].includes(d.estado)) return;
+    hab++;
+    prog += pd;
+  });
+  const tope = hab * 48 * 60 / ds;
+  const min = Math.max(0, tope - prog);
+  const semanalMin = hab > 0 ? Math.max(0, 48 * 60 - (prog / hab) * ds) : 0;
+  return { min, semanalMin, hab, tope };
+}
+function parseHorario(s) {
+  s = String(s || "").trim();
+  const sUp = s.toUpperCase();
+  if (!s || sUp === "DESCANSO" || sUp === "DSO" || sUp === "NAN" || s === "-" || s === "") return {
+    tipo: "DESCANSO"
+  };
+  const remoto = sUp.includes("REMOTO");
+  const tiempos = [];
+  const reT = /(\d{1,2}):(\d{2})/g;
+  let mt;
+  while ((mt = reT.exec(s)) !== null) tiempos.push({
+    h: parseInt(mt[1]),
+    m: parseInt(mt[2])
+  });
+  if (tiempos.length < 2) return {
+    tipo: "DESCANSO"
+  };
+  const hasPM = /pm/i.test(s);
+  let ingH = tiempos[0].h,
+    ingM = tiempos[0].m;
+  let salH = tiempos[tiempos.length - 1].h,
+    salM = tiempos[tiempos.length - 1].m;
+  if (hasPM && salH < 12) salH += 12;
+  const ing = ingH * 60 + ingM;
+  let sal = salH * 60 + salM;
+  if (sal <= ing) sal += 1440;
+  return {
+    tipo: remoto ? "REMOTO" : "PRESENCIAL",
+    ing,
+    sal,
+    jornada: sal - ing,
+    horStr: s.toUpperCase()
+  };
+}
+
+// ─── PROCESADOR ──────────────────────────────────────────────────────────────
+function procesarDatos(files, fechaCorte) {
+  const leerRaw = file => {
+    const wb = XLSX.read(file._ab, {
+      type: "array",
+      cellDates: true
+    });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    return XLSX.utils.sheet_to_json(ws, {
+      header: 1,
+      raw: true,
+      defval: null
+    });
+  };
+  const leerNoRaw = file => {
+    const wb = XLSX.read(file._ab, {
+      type: "array",
+      cellDates: true
+    });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    return XLSX.utils.sheet_to_json(ws, {
+      header: 1,
+      raw: false,
+      defval: ""
+    });
+  };
+
+  // BASE
+  const rawBase = leerRaw(files.base);
+  const hBase = rawBase[0].map(h => String(h || "").trim());
+  const iBC = hBase.findIndex(h => h.includes("Cód. Trab"));
+  const iBN = hBase.findIndex(h => h.includes("Nombres"));
+  const iBAP = hBase.findIndex(h => h.includes("Apellido Pat"));
+  const iBAM = hBase.findIndex(h => h.includes("Apellido Mat"));
+  const iBG = hBase.findIndex(h => h.includes("Gerencia"));
+  const iBUO = hBase.findIndex(h => h.includes("Unid. Org"));
+  const iBP = hBase.findIndex(h => h.includes("Posición"));
+  const iBFI = hBase.findIndex(h => h.includes("Fe. Ingreso") || h.includes("Ingreso"));
+  const iBFC = hBase.findIndex(h => h.includes("Fe. Cese") || h.includes("Cese"));
+  const baseMap = {};
+  rawBase.slice(1).forEach(r => {
+    const cod = parseInt(String(r[iBC] || "").replace(/\D/g, ""));
+    if (!cod || isNaN(cod)) return;
+    baseMap[cod] = {
+      nombre: `${r[iBAP] || ""} ${r[iBAM] || ""} ${r[iBN] || ""}`.replace(/\s+/g, " ").trim(),
+      gerencia: String(r[iBG] || "").trim().toUpperCase(),
+      uo: String(r[iBUO] || "").trim(),
+      pos: String(r[iBP] || "").trim(),
+      fe_ingreso: excelDateToISO(r[iBFI]) || null,
+      fe_cese: excelDateToISO(r[iBFC]) || null
+    };
+  });
+
+  // PROGRAMACIÓN
+  const rawProgRaw = leerRaw(files.prog);
+  let hRowProg = 0;
+  for (let i = 0; i < Math.min(rawProgRaw.length, 5); i++) {
+    if (rawProgRaw[i].some(c => String(c || "").toUpperCase().includes("CÓD") || String(c || "").toUpperCase().includes("GERENCIA"))) {
+      hRowProg = i;
+      break;
+    }
+  }
+  const hProgRaw = rawProgRaw[hRowProg];
+  const rawProgNoRaw = leerNoRaw(files.prog);
+  const hProgStr = rawProgNoRaw[hRowProg].map(h => String(h || "").trim());
+  const iPC = hProgStr.findIndex(h => h.toUpperCase().includes("CÓD") || h.toUpperCase().includes("COD"));
+  const iDSO = hProgStr.findIndex(h => h.toUpperCase() === "DSO");
+  const iPPos = hProgStr.findIndex(h => h.toUpperCase().includes("POSICIÓN") || h.toUpperCase().includes("POSICION"));
+
+  // Detectar columnas de fecha
+  const fechaCols = [];
+  hProgRaw.forEach((val, i) => {
+    if (i <= Math.max(iDSO, iPPos, iPC)) return;
+    const iso = excelDateToISO(val);
+    if (iso) fechaCols.push({
+      col: i,
+      fecha: iso
+    });
+  });
+
+  // Aplicar fecha de corte
+  const fechasCols = fechaCorte ? fechaCols.filter(f => f.fecha <= fechaCorte) : fechaCols;
+  const periodo = {
+    inicio: fechasCols.length > 0 ? fechasCols[0].fecha : null,
+    fin: fechaCorte || (fechaCols.length > 0 ? fechaCols[fechaCols.length - 1].fecha : null),
+    finOriginal: fechaCols.length > 0 ? fechaCols[fechaCols.length - 1].fecha : null
+  };
+
+  // Construir progMap
+  const progMap = {};
+  rawProgNoRaw.slice(hRowProg + 1).forEach(r => {
+    const cod = parseInt(String(r[iPC] || "").replace(/\D/g, ""));
+    if (!cod || isNaN(cod)) return;
+    progMap[cod] = {};
+    fechasCols.forEach(({
+      col,
+      fecha
+    }) => {
+      progMap[cod][fecha] = parseHorario(r[col]);
+    });
+  });
+
+  // FERIADOS
+  const rawFer = leerRaw(files.feriados);
+  const ferSet = new Set();
+  rawFer.slice(1).forEach(r => {
+    const iso = excelDateToISO(r[0]);
+    if (iso) ferSet.add(iso);
+  });
+
+  // TELETRABAJO — cod -> Set<fecha>
+  const refrigerioMap = {};
+  if (files.refrigerio) {
+    const rawRef = leerRaw(files.refrigerio);
+    const hRef = rawRef[0].map(h => String(h || "").trim());
+    const iRHor = hRef.findIndex(h => h.toLowerCase().includes("horario"));
+    const iRMin = hRef.findIndex(h => h.toLowerCase().includes("refrigerio"));
+    rawRef.slice(1).forEach(r => {
+      const hor = String(r[iRHor] || "").trim().toUpperCase();
+      const minVal = r[iRMin];
+      let mins = null;
+      if (minVal instanceof Date) mins = minVal.getHours() * 60 + minVal.getMinutes();
+      else if (typeof minVal === "number" && minVal >= 0 && minVal < 1) mins = Math.round(minVal * 1440);
+      else if (typeof minVal === "number" && minVal >= 1 && minVal <= 240) mins = Math.round(minVal); // escrito en minutos
+      else if (typeof minVal === "string" && /^\s*\d{1,2}:\d{2}/.test(minVal)) { const [a, b] = minVal.trim().split(":"); mins = parseInt(a) * 60 + parseInt(b); }
+      // Se guarda también 00:00: el horario existe en el archivo y su refrigerio es 0
+      if (hor && mins !== null && !isNaN(mins)) refrigerioMap[hor] = mins;
+    });
+  }
+  const teleMap = {};
+  if (files.teletrabajo) {
+    const rawTele = leerRaw(files.teletrabajo);
+    const hTele = rawTele[0].map(h => String(h || "").trim());
+    const iTCod = hTele.findIndex(h => h.includes("Cód"));
+    const iTFec = hTele.findIndex(h => h.includes("Fecha"));
+    rawTele.slice(1).forEach(r => {
+      const cod = parseInt(String(r[iTCod] || "").replace(/\D/g, ""));
+      const iso = excelDateToISO(r[iTFec]);
+      if (!cod || isNaN(cod) || !iso) return;
+      if (!teleMap[cod]) teleMap[cod] = new Set();
+      teleMap[cod].add(iso);
+    });
+  }
+
+  // ABSENTISMOS
+  const rawAbs = leerRaw(files.absentismos);
+  const hAbsR = rawAbs[0].map(h => String(h || "").trim());
+  const iACod = hAbsR.findIndex(h => h.includes("Cód"));
+  const iAFec = hAbsR.findIndex(h => h.includes("Fecha"));
+  const iATxt = hAbsR.findIndex(h => h.includes("Txt") || h.includes("explicativo") || h.includes("Descrip"));
+  const absMap = {};
+  rawAbs.slice(1).forEach(r => {
+    const cod = parseInt(String(r[iACod] || "").replace(/\D/g, ""));
+    const iso = excelDateToISO(r[iAFec]);
+    if (!cod || !iso) return;
+    if (!absMap[cod]) absMap[cod] = {};
+    absMap[cod][iso] = String(r[iATxt] || "Absentismo");
+  });
+
+  // MARCACIONES
+  const rawMarcRaw = leerRaw(files.marcaciones);
+  const hMarcR = rawMarcRaw[0].map(h => String(h || "").trim());
+  const iMFec = hMarcR.findIndex(h => h.includes("Fecha"));
+  const iMCod = hMarcR.findIndex(h => h.includes("Cód"));
+  const iMIng = hMarcR.findIndex(h => h.toLowerCase().includes("ingreso"));
+  const iMSal = hMarcR.findIndex(h => h.toLowerCase().includes("salida"));
+  const marcRaw = {};
+  rawMarcRaw.slice(1).forEach(r => {
+    const cod = parseInt(String(r[iMCod] || "").replace(/\D/g, ""));
+    const iso = excelDateToISO(r[iMFec]);
+    if (!cod || isNaN(cod) || !iso) return;
+    if (!marcRaw[cod]) marcRaw[cod] = {};
+    if (!marcRaw[cod][iso]) marcRaw[cod][iso] = {
+      ings: [],
+      sals: []
+    };
+    const ing = parseTimeToMin(r[iMIng]);
+    const sal = parseTimeToMin(r[iMSal]);
+    if (ing !== null) marcRaw[cod][iso].ings.push(ing);
+    if (sal !== null) marcRaw[cod][iso].sals.push(sal);
+  });
+
+  // Consolidar marcaciones
+  const marcMap = {};
+  Object.keys(marcRaw).forEach(cod => {
+    marcMap[parseInt(cod)] = {};
+    Object.keys(marcRaw[cod]).forEach(fecha => {
+      const {
+        ings,
+        sals
+      } = marcRaw[cod][fecha];
+      marcMap[parseInt(cod)][fecha] = {
+        ing: ings.length > 0 ? Math.min(...ings) : null,
+        sal: sals.length > 0 ? Math.max(...sals) : null
+      };
+    });
+  });
+
+  // CALCULAR POR COLABORADOR
+  const codsActivos = Object.keys(progMap).map(Number);
+  const colaboradores = codsActivos.map(cod => {
+    const prog = progMap[cod] || {};
+    const marc = marcMap[cod] || {};
+    const abs = absMap[cod] || {};
+    const tele = teleMap[cod] || new Set();
+    const base = baseMap[cod] || {};
+    const feIngreso = base.fe_ingreso || null;
+    const feCese = base.fe_cese || null;
+    let h_deb = 0,
+      h_real = 0,
+      h_excedente = 0;
+    let h_smrc = 0,
+      h_mi = 0,
+      h_tard = 0,
+      h_antic = 0;
+    let d_smrc = 0,
+      d_mi = 0,
+      d_tard = 0,
+      d_antic = 0;
+    let d_lab = 0,
+      d_desc = 0,
+      d_fer = 0,
+      d_abs = 0,
+      d_marc_comp = 0,
+      d_marc_inc = 0;
+    let h_hhee = 0, d_desc_trab = 0, d_fer_trab = 0;
+    const tareo = [];
+
+    // Horas programadas netas por día para déficit 48h (incluye feriados/absentismos; descanso = 0)
+    const progDefMap = {};
+    fechasCols.forEach(({
+      fecha
+    }) => {
+      const hor = prog[fecha] || {
+        tipo: "DESCANSO"
+      };
+      if (hor.tipo === "DESCANSO" || !hor.jornada) return;
+      const horStrSemN = (hor.horStr||"").toUpperCase().replace(/\s+/g,' ').trim();
+      const horKeySem = horStrSemN ? Object.keys(refrigerioMap).find(k=>k.replace(/\s+/g,' ').trim()===horStrSemN) : null;
+      const refMinSem = horKeySem !== undefined && horKeySem !== null ? refrigerioMap[horKeySem] : 0;
+      progDefMap[fecha] = Math.max(0, hor.jornada - (refMinSem || 0));
+    });
+    fechasCols.forEach(({
+      fecha
+    }) => {
+      // Ignorar días antes del ingreso o después del cese
+      if (feIngreso && fecha < feIngreso) return;
+      if (feCese && fecha > feCese) return;
+      const horBase = prog[fecha] || {
+        tipo: "DESCANSO"
+      };
+      // Si tiene teletrabajo ese día y no es descanso → cambiar a REMOTO
+      const hor = tele.has(fecha) && horBase.tipo !== "DESCANSO" ? {
+        ...horBase,
+        tipo: "REMOTO"
+      } : horBase;
+      const dt = new Date(fecha + "T12:00:00");
+      const diaSem = DIAS_SEMANA[dt.getDay()];
+      const esDescanso = hor.tipo === "DESCANSO";
+      const esFeriado = ferSet.has(fecha);
+      // Absentismo justificado puede ser en cualquier día; el injustificado no justifica (se trata como día laborable normal)
+      const absInj = abs[fecha] && esAbsInjustificado(abs[fecha]) ? abs[fecha] : null;
+      const esAbs = abs[fecha] && !absInj ? abs[fecha] : null;
+
+      // PRIORIDAD: ABSENTISMO > FERIADO > DESCANSO
+      // Absentismo en cualquier día (feriado, descanso o laborable) → mostrar absentismo
+      if (esAbs) {
+        // Verificar si hay marcación real ese día a pesar del absentismo
+        const marcaDiaAbs = marc[fecha] || {
+          ing: null,
+          sal: null
+        };
+        if (marcaDiaAbs.ing !== null || marcaDiaAbs.sal !== null) {
+          // Tiene marcación en día de absentismo — procesar como laborable con nota
+          if (!esDescanso) d_abs++;
+          // continúa abajo para calcular como día laborable con nota de absentismo
+        } else {
+          if (esDescanso) d_desc++;else if (esFeriado) d_fer++;else d_abs++;
+          const horProg = esDescanso || esFeriado ? "" : `${minToHHMM(hor.ing)}-${minToHHMM(hor.sal)}`;
+          tareo.push({
+            fecha,
+            diaSem,
+            tipo: esDescanso ? "DESCANSO" : hor.tipo,
+            horProg,
+            estado: "ABSENTISMO",
+            esFer: !esDescanso && esFeriado,
+            obs: abs[fecha]
+          });
+          return;
+        }
+      }
+      // Marcación en descanso o feriado → día trabajado informativo (HHEE), no entra en deuda
+      const marcaLibre = marc[fecha] || { ing: null, sal: null };
+      const tieneMarcaLibre = marcaLibre.ing !== null || marcaLibre.sal !== null;
+      const trabLibre = refL => {
+        if (marcaLibre.ing === null || marcaLibre.sal === null) return 0;
+        const s = marcaLibre.sal >= marcaLibre.ing ? marcaLibre.sal : marcaLibre.sal + 1440;
+        return Math.max(0, s - marcaLibre.ing - (refL || 0));
+      };
+      if (esDescanso && tieneMarcaLibre) {
+        d_desc++;
+        d_desc_trab++;
+        const tr = trabLibre(0);
+        h_hhee += tr / 60;
+        tareo.push({
+          fecha,
+          diaSem,
+          tipo: "DESCANSO",
+          estado: "DESC_TRAB",
+          ing: marcaLibre.ing,
+          sal: marcaLibre.sal,
+          trab_min: tr,
+          hhee_min: tr,
+          marcaIncompleta: marcaLibre.ing === null || marcaLibre.sal === null,
+          absObs: esAbs ? abs[fecha] : null
+        });
+        return;
+      }
+      if (esFeriado && tieneMarcaLibre) {
+        d_fer++;
+        d_fer_trab++;
+        const hsF = hor.horStr ? hor.horStr.toUpperCase().replace(/\s+/g,' ').trim() : '';
+        const hkF = hsF ? Object.keys(refrigerioMap).find(k => k.replace(/\s+/g,' ').trim() === hsF) : null;
+        const refF = hkF !== undefined && hkF !== null ? refrigerioMap[hkF] : 0;
+        const tr = trabLibre(refF);
+        h_hhee += tr / 60;
+        tareo.push({
+          fecha,
+          diaSem,
+          tipo: hor.tipo,
+          horProg: `${minToHHMM(hor.ing)}-${minToHHMM(hor.sal)}`,
+          refrig: `${String(Math.floor(refF/60)).padStart(2,"0")}:${String(refF%60).padStart(2,"0")}`,
+          estado: "FER_TRAB",
+          ing: marcaLibre.ing,
+          sal: marcaLibre.sal,
+          trab_min: tr,
+          hhee_min: tr,
+          marcaIncompleta: marcaLibre.ing === null || marcaLibre.sal === null,
+          absObs: esAbs ? abs[fecha] : null
+        });
+        return;
+      }
+      if (esDescanso) {
+        d_desc++;
+        tareo.push({
+          fecha,
+          diaSem,
+          tipo: "DESCANSO",
+          estado: "DESCANSO"
+        });
+        return;
+      }
+      if (esFeriado) {
+        d_fer++;
+        tareo.push({
+          fecha,
+          diaSem,
+          tipo: hor.tipo,
+          horProg: `${minToHHMM(hor.ing)}-${minToHHMM(hor.sal)}`,
+          estado: "FERIADO"
+        });
+        return;
+      }
+      d_lab++;
+      const horStrNorm = hor.horStr ? hor.horStr.toUpperCase().replace(/\s+/g,' ').trim() : '';
+      const horKey = horStrNorm ? Object.keys(refrigerioMap).find(k => k.replace(/\s+/g,' ').trim() === horStrNorm) : null;
+      const refMin = horKey !== undefined ? refrigerioMap[horKey] : 0;
+      const jMin = Math.max(0, (hor.jornada || 480) - refMin);
+      const tieneAbsConMarc = !!(!esDescanso && !esFeriado && esAbs && marc[fecha] && (marc[fecha].ing !== null || marc[fecha].sal !== null));
+      const marcaDia = marc[fecha] || {
+        ing: null,
+        sal: null
+      };
+      const ingR = marcaDia.ing;
+      const salR = marcaDia.sal;
+      if (ingR === null && salR === null) {
+        // Día REMOTO sin marcación → completar automáticamente, sin deuda
+        if (hor.tipo === "REMOTO") {
+          h_deb += jMin / 60;
+          h_real += jMin / 60;
+          d_marc_comp++;
+          const hProgMinR = hor.jornada; // jornada bruta = sal - ing
+          tareo.push({
+            fecha,
+            diaSem,
+            tipo: "REMOTO",
+            horProg: `${minToHHMM(hor.ing)}-${minToHHMM(hor.sal)}`,
+            hProg: `${String(Math.floor(hProgMinR/60)).padStart(2,"0")}:${String(hProgMinR%60).padStart(2,"0")}`,
+            refrig: `${String(Math.floor(refMin/60)).padStart(2,"0")}:${String(refMin%60).padStart(2,"0")}`,
+            hDeb: `${String(Math.floor(jMin/60)).padStart(2,"0")}:${String(jMin%60).padStart(2,"0")}`,
+            ing: hor.ing,
+            sal: hor.sal,
+            ingAutomatic: true,
+            salAutomatic: true,
+            trab_min: jMin,
+            tard_min: 0,
+            antic_min: 0,
+            deuda_min: 0,
+            excedente_min: 0,
+            estado: "REMOTO"
+          });
+          return;
+        }
+        h_deb += jMin / 60;
+        h_smrc += jMin / 60;
+        d_smrc++;
+        const hProgMinSM = hor.jornada; // jornada bruta
+        tareo.push({
+          fecha,
+          diaSem,
+          tipo: hor.tipo,
+          horProg: `${minToHHMM(hor.ing)}-${minToHHMM(hor.sal)}`,
+          hProg: `${String(Math.floor(hProgMinSM/60)).padStart(2,"0")}:${String(hProgMinSM%60).padStart(2,"0")}`,
+          refrig: `${String(Math.floor(refMin/60)).padStart(2,"0")}:${String(refMin%60).padStart(2,"0")}`,
+          hDeb: `${String(Math.floor(jMin/60)).padStart(2,"0")}:${String(jMin%60).padStart(2,"0")}`,
+          estado: "SIN_MARC",
+          absInj,
+          deuda_min: jMin,
+          absObs: tieneAbsConMarc ? abs[fecha] : null
+        });
+        return;
+      }
+      if (ingR === null || salR === null) {
+        d_mi++;
+        d_marc_inc++;
+        // Completar marca faltante con horario programado (en rojo = estimada)
+        const ingEst = ingR !== null ? ingR : hor.ing; // real o estimado
+        const salEst0 = salR !== null ? salR : hor.sal; // real o estimado
+        // Turno nocturno: salida real de madrugada → día siguiente
+        const salEst = (hor.sal > 1440 && salEst0 < ingEst) ? salEst0 + 1440 : salEst0;
+        const ingAutomatic = ingR === null; // true = ingreso fue completado automáticamente
+        const salAutomatic = salR === null; // true = salida fue completada automáticamente
+        const trabMin = Math.max(0, salEst - ingEst - refMin);
+        h_real += trabMin / 60;
+        const tard = Math.max(0, ingEst - hor.ing);
+        const antic = Math.max(0, hor.sal - salEst);
+        if (tard > 0) {
+          h_tard += tard / 60;
+          d_tard++;
+        }
+        if (antic > 0) {
+          h_antic += antic / 60;
+          d_antic++;
+        }
+        // Excedentes
+        if (ingEst < hor.ing) h_excedente += (hor.ing - ingEst) / 60;
+        if (salEst > hor.sal) h_excedente += (salEst - hor.sal) / 60;
+        const deuda_min_mi = Math.max(0, jMin - trabMin);
+        const excedente_min_mi = Math.max(0, trabMin - jMin);
+        if (excedente_min_mi > 0) h_excedente += excedente_min_mi / 60;
+        h_mi += deuda_min_mi / 60;
+        h_deb += jMin / 60;
+        tareo.push({
+          fecha,
+          diaSem,
+          tipo: hor.tipo,
+          horProg: `${minToHHMM(hor.ing)}-${minToHHMM(hor.sal)}`,
+          hProg: `${String(Math.floor(hor.jornada/60)).padStart(2,"0")}:${String(hor.jornada%60).padStart(2,"0")}`,
+          refrig: `${String(Math.floor(refMin/60)).padStart(2,"0")}:${String(refMin%60).padStart(2,"0")}`,
+          hDeb: `${String(Math.floor(jMin/60)).padStart(2,"0")}:${String(jMin%60).padStart(2,"0")}`,
+          ing: ingEst,
+          sal: salEst,
+          ingAutomatic,
+          salAutomatic,
+          trab_min: trabMin,
+          tard_min: tard,
+          antic_min: antic,
+          deuda_min: deuda_min_mi,
+          excedente_min: excedente_min_mi,
+          estado: "MARC_INC",
+          absObs: tieneAbsConMarc ? abs[fecha] : null
+        });
+        return;
+      }
+      d_marc_comp++;
+      h_deb += jMin / 60;
+      // Turno nocturno: ajustar salR si es menor que salida programada
+      const salRAdj = (hor.sal > 1440 && salR < hor.ing) ? salR + 1440 : salR;
+      const trabMin = Math.max(0, salRAdj - ingR - refMin);
+      h_real += trabMin / 60;
+      const tard = Math.max(0, ingR - hor.ing);
+      const antic = Math.max(0, hor.sal - salRAdj);
+      if (tard > 0) {
+        h_tard += tard / 60;
+        d_tard++;
+      }
+      if (antic > 0) {
+        h_antic += antic / 60;
+        d_antic++;
+      }
+
+      // Deuda del día = MAX(0, jornada - trabajado)
+      // Excedente del día = MAX(0, trabajado - jornada)
+      const deuda_min = Math.max(0, jMin - trabMin);
+      const excedente_min = Math.max(0, trabMin - jMin);
+      if (excedente_min > 0) h_excedente += excedente_min / 60;
+      let estado = "OK";
+      if (deuda_min > 0 && tard > 0 && antic > 0) estado = "TARD_ANTIC";else if (deuda_min > 0 && tard > 0) estado = "TARDANZA";else if (deuda_min > 0 && antic > 0) estado = "ANTICIPADA";
+      const hProgMin = hor.jornada; // jornada bruta = sal - ing
+      tareo.push({
+        fecha,
+        diaSem,
+        tipo: hor.tipo,
+        horProg: `${minToHHMM(hor.ing)}-${minToHHMM(hor.sal)}`,
+        hProg: `${String(Math.floor(hProgMin/60)).padStart(2,"0")}:${String(hProgMin%60).padStart(2,"0")}`,
+        refrig: `${String(Math.floor(refMin/60)).padStart(2,"0")}:${String(refMin%60).padStart(2,"0")}`,
+        hDeb: `${String(Math.floor(jMin/60)).padStart(2,"0")}:${String(jMin%60).padStart(2,"0")}`,
+        ing: ingR,
+        sal: salR,
+        trab_min: trabMin,
+        tard_min: tard,
+        antic_min: antic,
+        deuda_min,
+        excedente_min,
+        estado,
+        absObs: tieneAbsConMarc ? abs[fecha] : null
+      });
+    });
+    tareo.forEach(d => { d.progDef = progDefMap[d.fecha] || 0; });
+    const dias_sem = calcDiasSemana(fechasCols.map(f => f.fecha).filter(f => (!feIngreso || f >= feIngreso) && (!feCese || f <= feCese)), prog);
+    const defCalc = calcDeficit48(tareo, dias_sem);
+    const deficit_48 = defCalc.min / 60;
+    const deficit_48_semanal = defCalc.semanalMin / 60;
+    const deuda_op = Math.max(0, h_deb - h_real); // Deuda = H.Deb - H.Trab
+    const deuda_total = deuda_op; // alias
+    const deuda_neta = Math.max(0, deuda_op + deficit_48); // Deuda Neta = Deuda + Déficit 48h
+    const cumpl_jornada = h_deb > 0 ? parseFloat((h_real / h_deb * 100).toFixed(1)) : 0;
+    const cumpl_48 = (h_deb + deficit_48) > 0 ? parseFloat(((h_real / (h_deb + deficit_48)) * 100).toFixed(1)) : 0;
+    return {
+      cod,
+      nombre: base.nombre || `Colaborador ${cod}`,
+      gerencia: base.gerencia || "SIN GERENCIA",
+      uo: base.uo || "",
+      pos: base.pos || "",
+      h_deb: parseFloat(h_deb.toFixed(2)),
+      h_real: parseFloat(h_real.toFixed(2)),
+      h_excedente: parseFloat(h_excedente.toFixed(2)),
+      h_smrc: parseFloat(h_smrc.toFixed(2)),
+      d_smrc,
+      h_mi: parseFloat(h_mi.toFixed(2)),
+      d_mi,
+      h_tard: parseFloat(h_tard.toFixed(2)),
+      d_tard,
+      h_antic: parseFloat(h_antic.toFixed(2)),
+      d_antic,
+      deficit_48: parseFloat(deficit_48.toFixed(2)),
+      deuda_op: parseFloat(deuda_op.toFixed(2)),
+      deuda_total: parseFloat(deuda_total.toFixed(2)),
+      deuda_neta: parseFloat(deuda_neta.toFixed(2)),
+      cumpl_jornada,
+      cumpl_48: Math.min(100, Math.max(0, cumpl_48)),
+      d_lab,
+      d_desc,
+      d_fer,
+      d_abs,
+      d_marc_comp,
+      d_marc_inc,
+      fe_ingreso: feIngreso,
+      fe_cese: feCese,
+      deficit_48_semanal: parseFloat(deficit_48_semanal.toFixed(2)),
+      dias_sem,
+      h_hhee: parseFloat(h_hhee.toFixed(2)),
+      d_desc_trab,
+      d_fer_trab,
+      tareo
+    };
+  });
+  // ── ALERTAS DE CALIDAD DE DATOS ──
+  const alertas = [];
+  const faltan = (archivo, pares) => {
+    const f = pares.filter(([i]) => i < 0).map(([, n]) => n);
+    if (f.length) alertas.push({ nivel: "error", msg: `${archivo}: no se encontraron las columnas ${f.join(", ")}`, detalle: [] });
+  };
+  faltan("01. Base de datos", [[iBC, "Cód. Trab"], [iBN, "Nombres"], [iBAP, "Apellido Pat"], [iBG, "Gerencia"], [iBUO, "Unid. Org"], [iBP, "Posición"]]);
+  faltan("02. Marcaciones", [[iMFec, "Fecha"], [iMCod, "Cód"], [iMIng, "Ingreso"], [iMSal, "Salida"]]);
+  faltan("03. Programación", [[iPC, "Cód"]]);
+  if (!fechaCols.length) alertas.push({ nivel: "error", msg: "03. Programación: no se encontraron columnas de fecha", detalle: [] });
+  faltan("04. Absentismos", [[iACod, "Cód"], [iAFec, "Fecha"]]);
+  if (files.refrigerio && !Object.keys(refrigerioMap).length) alertas.push({ nivel: "aviso", msg: "07. Refrigerio: no se leyó ningún horario con refrigerio (revisa columnas Horario y Refrigerio)", detalle: [] });
+  if (files.refrigerio) {
+    const horSinRef = {};
+    Object.values(progMap).forEach(pm => Object.values(pm).forEach(hor => {
+      if (!hor || hor.tipo === "DESCANSO" || !hor.horStr) return;
+      const n = hor.horStr.replace(/\s+/g, " ").trim();
+      if (!Object.keys(refrigerioMap).some(k => k.replace(/\s+/g, " ").trim() === n)) horSinRef[n] = (horSinRef[n] || 0) + 1;
+    }));
+    const lista = Object.entries(horSinRef).sort((a, b) => b[1] - a[1]);
+    if (lista.length) alertas.push({ nivel: "aviso", msg: `${lista.length} horario(s) de la Programación no están en 07. Refrigerio: se calculan con 0 min de refrigerio (si sí tienen, las H. Debidas y la deuda salen infladas)`, detalle: lista.map(([hs, n]) => `${hs} · ${n} día(s) programados`) });
+  } else {
+    alertas.push({ nivel: "aviso", msg: "No se cargó 07. Refrigerio: todos los horarios se calculan con 0 min de refrigerio", detalle: [] });
+  }
+  const tiposInj = {};
+  Object.values(absMap).forEach(m => Object.values(m).forEach(t => { if (esAbsInjustificado(t)) tiposInj[t] = (tiposInj[t] || 0) + 1; }));
+  if (Object.keys(tiposInj).length) alertas.push({ nivel: "info", msg: `Absentismos tratados como injustificados (cuentan como deuda, igual que un día sin marcación): ${Object.keys(tiposInj).join(", ")}`, detalle: Object.entries(tiposInj).map(([t, n]) => `${t} · ${n} día(s)`) });
+  const tiposAbs = {};
+  Object.values(absMap).forEach(m => Object.values(m).forEach(t => { if (!esAbsInjustificado(t)) tiposAbs[t] = (tiposAbs[t] || 0) + 1; }));
+  if (Object.keys(tiposAbs).length) alertas.push({ nivel: "info", msg: `Absentismos tratados como justificados (no generan deuda): ${Object.keys(tiposAbs).length} tipo(s)`, detalle: Object.entries(tiposAbs).sort((a, b) => b[1] - a[1]).map(([t, n]) => `${t} · ${n} día(s)`) });
+  const sinBase = codsActivos.filter(c => !baseMap[c]);
+  if (sinBase.length) alertas.push({ nivel: "aviso", msg: `${sinBase.length} código(s) están en Programación pero no en la Base de datos (sin nombre, gerencia ni UO)`, detalle: sinBase.map(String) });
+  const progSet = new Set(codsActivos);
+  const marcSinProg = Object.keys(marcMap).map(Number).filter(c => !progSet.has(c));
+  if (marcSinProg.length) alertas.push({ nivel: "aviso", msg: `${marcSinProg.length} código(s) tienen marcaciones pero no están en Programación (no se analizan)`, detalle: marcSinProg.map(c => baseMap[c] ? `${c} · ${baseMap[c].nombre}` : String(c)) });
+  return {
+    colaboradores,
+    periodo,
+    alertas,
+    gerencias: [...new Set(colaboradores.map(c => c.gerencia))]
+  };
+}
+
+// ─── RECÁLCULO ÚNICO (corte + tolerancia) ─────────────────────────────────────
+// Todos los totales salen del tareo diario con estas mismas reglas, así la carga inicial,
+// el cambio de fecha de corte y la tolerancia dan siempre el mismo resultado.
+function hhmmAMin(s) {
+  if (!s || typeof s !== "string" || !s.includes(":")) return null;
+  const [a, b] = s.split(":");
+  return parseInt(a) * 60 + parseInt(b);
+}
+function aplicarTolerancia(d, tol) {
+  // Tardanza dentro de la tolerancia: no cuenta como tardanza, pero los minutos SÍ se deben (siguen en la deuda)
+  if (!tol || !(d.tard_min > 0) || d.tard_min > tol || d.ingAutomatic) return d;
+  if (!["OK", "TARDANZA", "TARD_ANTIC", "ANTICIPADA", "MARC_INC"].includes(d.estado)) return d;
+  const nd = { ...d, tard_min: 0, tol_min: d.tard_min };
+  if (d.estado === "TARDANZA") nd.estado = "TARD_TOL";
+  if (d.estado === "TARD_ANTIC") nd.estado = "ANTICIPADA";
+  return nd;
+}
+function resumirColab(c, fechaFin, tol, fechaIni) {
+  const tareo = c.tareo.filter(d => (!fechaFin || d.fecha <= fechaFin) && (!fechaIni || d.fecha >= fechaIni)).map(d => aplicarTolerancia(d, tol));
+  let h_deb = 0, h_real = 0, h_smrc = 0, h_mi = 0, h_tard = 0, h_antic = 0, h_excedente = 0, h_hhee = 0, h_mc = 0, h_rem = 0, h_tol = 0;
+  let d_smrc = 0, d_mi = 0, d_tard = 0, d_antic = 0, d_lab = 0, d_desc = 0, d_fer = 0, d_abs = 0, d_marc_comp = 0, d_marc_inc = 0, d_desc_trab = 0, d_fer_trab = 0, d_mc = 0, d_rem = 0, d_tol = 0;
+  tareo.forEach(d => {
+    if (d.estado === "DESCANSO") { d_desc++; return; }
+    if (d.estado === "DESC_TRAB") { d_desc++; d_desc_trab++; h_hhee += (d.hhee_min || 0) / 60; return; }
+    if (d.estado === "FERIADO") { d_fer++; return; }
+    if (d.estado === "FER_TRAB") { d_fer++; d_fer_trab++; h_hhee += (d.hhee_min || 0) / 60; return; }
+    if (d.estado === "ABSENTISMO") { if (d.tipo === "DESCANSO") d_desc++; else if (d.esFer) d_fer++; else d_abs++; return; }
+    d_lab++;
+    if (d.absObs) d_abs++;
+    const jMin = hhmmAMin(d.hDeb) ?? 480;
+    h_deb += jMin / 60;
+    if (d.estado === "SIN_MARC") { h_smrc += jMin / 60; d_smrc++; return; }
+    if (d.estado === "REMOTO") { h_real += jMin / 60; h_rem += jMin / 60; d_rem++; d_marc_comp++; return; }
+    h_real += (d.trab_min || 0) / 60;
+    // H.MI = horas trabajadas en días con marca incompleta (su deuda ya está en H.Tard / H.Ant)
+    if (d.estado === "MARC_INC") { h_mi += (d.trab_min || 0) / 60; d_mi++; d_marc_inc++; }
+    else { d_marc_comp++; d_mc++; h_mc += (d.trab_min || 0) / 60; }
+    if (d.tard_min > 0) { h_tard += d.tard_min / 60; d_tard++; }
+    if (d.tol_min > 0) { h_tol += d.tol_min / 60; d_tol++; }
+    if (d.antic_min > 0) { h_antic += d.antic_min / 60; d_antic++; }
+    if (d.excedente_min > 0) h_excedente += d.excedente_min / 60;
+  });
+  const def = calcDeficit48(tareo, c.dias_sem);
+  const deficit_48 = def.min / 60;
+  const deuda_op = Math.max(0, h_deb - h_real);
+  // Excedente del período: lo trabajado de más sobre sus H. Debidas (cubre primero el déficit 48h)
+  const excedente = Math.max(0, h_real - h_deb);
+  const deuda_neta = Math.max(0, deuda_op + deficit_48 - excedente);
+  const cumpl_jornada = h_deb > 0 ? parseFloat((h_real / h_deb * 100).toFixed(1)) : 0;
+  const cumpl_48 = (h_deb + deficit_48) > 0 ? Math.min(100, Math.max(0, parseFloat((h_real / (h_deb + deficit_48) * 100).toFixed(1)))) : 0;
+  const r2 = v => parseFloat(v.toFixed(2));
+  return {
+    ...c, tareo,
+    h_deb: r2(h_deb), h_real: r2(h_real), h_smrc: r2(h_smrc), h_mi: r2(h_mi), h_tard: r2(h_tard), h_antic: r2(h_antic),
+    h_excedente: r2(h_excedente), h_hhee: r2(h_hhee), h_mc: r2(h_mc), h_rem: r2(h_rem), h_tol: r2(h_tol),
+    d_smrc, d_mi, d_tard, d_antic, d_lab, d_desc, d_fer, d_abs, d_marc_comp, d_marc_inc, d_desc_trab, d_fer_trab, d_mc, d_rem, d_tol,
+    deficit_48: r2(deficit_48), deficit_48_semanal: r2(def.semanalMin / 60),
+    deuda_op: r2(deuda_op), deuda_total: r2(deuda_op), excedente: r2(excedente), deuda_neta: r2(deuda_neta),
+    cumpl_jornada, cumpl_48
+  };
+}
+function recalcularDatos(orig, fechaFin, tol, fechaIni) {
+  const fin = fechaFin || orig.periodo.finOriginal;
+  const ini = fechaIni && fechaIni > orig.periodo.inicio ? fechaIni : orig.periodo.inicio;
+  return {
+    ...orig,
+    periodo: { ...orig.periodo, inicio: ini, inicioCargado: orig.periodo.inicio, fin },
+    // Solo quienes tienen días en el período elegido (ingresos posteriores o ceses anteriores quedan fuera)
+    colaboradores: orig.colaboradores.map(c => resumirColab(c, fin, tol || 0, ini)).filter(c => c.tareo.length > 0)
+  };
+}
+// Períodos de planilla: del 21 del mes anterior al 20 del mes (ej. Enero = 21/12 → 20/01)
+const MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+function periodosPlanilla(inicio, fin) {
+  if (!inicio || !fin) return [];
+  const iso = (y, m, d) => `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  let [y, m, d] = inicio.split("-").map(Number);
+  if (d >= 21) { m++; if (m > 12) { m = 1; y++; } }
+  const lista = [];
+  for (let k = 0; k < 60; k++) {
+    const py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1;
+    const desde = iso(py, pm, 21), hasta = iso(y, m, 20);
+    if (desde > fin) break;
+    const dReal = desde < inicio ? inicio : desde, hReal = hasta > fin ? fin : hasta;
+    lista.push({ id: iso(y, m, 1).slice(0, 7), label: `${MESES_ES[m - 1]} ${y}`, desde: dReal, hasta: hReal, parcial: dReal !== desde || hReal !== hasta, desdeTeo: desde, hastaTeo: hasta });
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return lista;
+}
+
+// ─── EXPORTAR EXCEL ───────────────────────────────────────────────────────────
+// Celdas Excel con formato real (horas sumables, %, fechas)
+const xH = h => (h === null || h === undefined || isNaN(h)) ? "" : { v: Math.round(h * 60) / 1440, t: "n", z: "[h]:mm" };
+// 0 se exporta como 0:00; vacío solo cuando el dato no aplica (undefined/null)
+const xMin = m => (m === null || m === undefined || isNaN(m)) ? "" : { v: Math.max(0, Math.round(m)) / 1440, t: "n", z: "[h]:mm" };
+const xHora = m => (m === null || m === undefined) ? "" : { v: (m % 1440) / 1440, t: "n", z: "hh:mm" };
+const xPct = p => ({ v: (parseFloat(p) || 0) / 100, t: "n", z: "0.0%" });
+const xFecha = iso => {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  return { v: (Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000, t: "n", z: "dd/mm/yyyy" };
+};
+const ESTADO_TXT = d => d.estado === "ABSENTISMO" ? (d.obs || "Absentismo") : d.absInj ? `Falta injustificada (${d.absInj})` : (ESTADO_STYLE[d.estado] || ESTADO_STYLE.OK).label;
+function hojaExcel(filas, anchos) {
+  const ws = XLSX.utils.aoa_to_sheet(filas);
+  ws["!cols"] = anchos.map(w => ({ wch: w }));
+  if (filas.length > 1) ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: filas.length - 1, c: filas[0].length - 1 } }) };
+  return ws;
+}
+
+const CAB_KRONOS = ["Cód.Trab", "Nombres", "Gerencia", "UO", "Posición", "Fecha", "Día", "Tipo", "Horario", "H.Prog.", "Refrigerio", "H.Deb.", "Ingreso", "Salida", "H.Trab.", "Tardanza", "Tard.Tolerada", "Sal.Ant.", "Excedente", "Deuda", "Estado", "Observación"];
+const ANCHOS_KRONOS = [8, 30, 22, 22, 28, 11, 5, 10, 13, 8, 8, 8, 8, 8, 8, 8, 10, 8, 9, 8, 18, 40];
+function exportarExcel(datos, nombreArchivo) {
+  const wb = XLSX.utils.book_new();
+  const filas = [CAB_KRONOS, ...filasKronosExcel(datos, false)];
+  XLSX.utils.book_append_sheet(wb, hojaExcel(filas, ANCHOS_KRONOS), "Kronos");
+  XLSX.writeFile(wb, nombreArchivo + ".xlsx");
+}
+function filasKronosExcel(datos, conDescansos) {
+  const filas = [];
+  datos.forEach(c => {
+    c.tareo.forEach(d => {
+      if (d.estado === "DESCANSO" && !conDescansos) return;
+      const sinMarca = d.estado === "FERIADO" || d.estado === "ABSENTISMO";
+      const obs = [];
+      if (d.ingAutomatic && d.estado !== "REMOTO") obs.push("Ingreso completado con horario");
+      if (d.salAutomatic && d.estado !== "REMOTO") obs.push("Salida completada con horario");
+      if (d.estado === "REMOTO") obs.push("Remoto: jornada completada automáticamente");
+      if (d.absObs) obs.push(`Marcó en día de ${d.absObs}`);
+      if (d.tol_min > 0) obs.push(`Tardanza de ${d.tol_min} min tolerada (sí se debe)`);
+      if ((d.estado === "DESC_TRAB" || d.estado === "FER_TRAB")) obs.push(`HHEE informativa${d.marcaIncompleta ? " (marca incompleta)" : ""}`);
+      filas.push([
+        c.cod, c.nombre, c.gerencia, c.uo, c.pos,
+        xFecha(d.fecha), d.diaSem,
+        d.tipo === "REMOTO" || d.estado === "REMOTO" ? "Remoto" : d.tipo === "DESCANSO" ? "Descanso" : "Presencial",
+        d.horProg || "",
+        xMin(hhmmAMin(d.hProg)), xMin(hhmmAMin(d.refrig)), xMin(hhmmAMin(d.hDeb)),
+        sinMarca ? "" : xHora(d.ing), sinMarca ? "" : xHora(d.sal),
+        xMin(d.trab_min), xMin(d.tard_min), xMin(d.tol_min), xMin(d.antic_min), xMin(d.excedente_min), xMin(d.deuda_min),
+        ESTADO_TXT(d), obs.join(" · ")
+      ]);
+    });
+  });
+  return filas;
+}
+// Ficha individual en Excel: hoja Resumen + hoja Tareo diario
+function exportarFichaExcel(c, periodo) {
+  const wb = XLSX.utils.book_new();
+  const cd = getCausaDeuda(c), cn = getCausaDN(c);
+  const R = [
+    ["FICHA DE JORNADA", ""],
+    ["Colaborador", c.nombre], ["Código", c.cod], ["Gerencia", c.gerencia], ["UO", c.uo], ["Posición", c.pos],
+    ["Fecha de ingreso", xFecha(c.fe_ingreso)], ["Período", `${fmtFecha(periodo.inicio)} → ${fmtFecha(periodo.fin)}`], ["Días de trabajo por semana", c.dias_sem || ""],
+    ["", ""], ["DÍAS", ""],
+    ["Días laborables", c.d_lab], ["Descansos", c.d_desc], ["Feriados", c.d_fer], ["Absentismos", c.d_abs], ["Desc./Fer. trabajados", (c.d_desc_trab || 0) + (c.d_fer_trab || 0)],
+    ["", ""], ["HORAS", ""],
+    ["H. Debidas", xH(c.h_deb)], ["H. Reales", xH(c.h_real)], ["HHEE informativas (desc./fer.)", xH(c.h_hhee || 0)],
+    ["", ""], ["MARCACIONES (días · horas)", ""],
+    ...BLOQUE.flatMap(b => [[`${b.titulo} — días`, c[b.kd] || 0], [`${b.titulo} — horas`, xH(c[b.kh] || 0)]]),
+    ["", ""], ["DEUDA", ""],
+    ["Deuda (H.Deb. − H.Reales)", xH(c.deuda_op)], ["Excedente (H.Reales − H.Deb.)", xH(c.excedente || 0)], ["% Cumpl. Prog.", xPct(c.cumpl_jornada)],
+    ["Déficit 48h", xH(c.deficit_48)], ["Deuda Neta (Deuda + Déficit − Excedente)", xH(c.deuda_neta)], ["% Cumpl. 48h", xPct(c.cumpl_48)],
+    ["Causa principal de deuda", cd ? cd.label : "Sin deuda"], ["Causa principal de deuda neta", cn ? cn.label : "Sin deuda"]
+  ];
+  const ws1 = XLSX.utils.aoa_to_sheet(R);
+  ws1["!cols"] = [{ wch: 42 }, { wch: 40 }];
+  XLSX.utils.book_append_sheet(wb, ws1, "Resumen");
+  XLSX.utils.book_append_sheet(wb, hojaExcel([CAB_KRONOS, ...filasKronosExcel([c], true)], ANCHOS_KRONOS), "Tareo diario");
+  XLSX.writeFile(wb, `Ficha_${c.cod}_${String(c.nombre).split(" ").slice(0, 2).join("_")}_${periodo.fin || ""}`.replace(/[^\w\-]+/g, "_") + ".xlsx");
+}
+
+const COLS_RESUMEN = ["Cód.Trab", "Nombres", "Gerencia", "Posición", "UO", "Fe.Ingreso", "Fe.Cese", "Días/sem", "D.Lab", "D.Desc", "D.Fer", "D.Abs",
+  "H.Deb.", "H.Trab.", "D.MC", "H.MC", "D.Rem", "H.Rem", "D.MI", "H.MI", "D.S/Marc", "H.S/Marc", "D.Tard", "H.Tard", "D.Tol", "H.Tol", "D.Ant", "H.Ant",
+  "Deuda", "Excedente", "Cumpl.Prog.", "Déf.48h", "Deuda Neta", "Cumpl.48h", "D.Desc/Fer trab.", "HHEE inf.", "Causa Deuda", "Causa Deuda Neta"];
+function filaResumen(c) {
+  const cd = getCausaDeuda(c), cn = getCausaDN(c);
+  return [
+    c.cod, c.nombre, c.gerencia, c.pos, c.uo, xFecha(c.fe_ingreso), xFecha(c.fe_cese), c.dias_sem || "",
+    c.d_lab, c.d_desc, c.d_fer, c.d_abs,
+    xH(c.h_deb), xH(c.h_real), ...BLOQUE.flatMap(b => [c[b.kd] || 0, xH(c[b.kh] || 0)]),
+    xH(c.deuda_op), xH(c.excedente || 0), xPct(c.cumpl_jornada), xH(c.deficit_48), xH(c.deuda_neta), xPct(c.cumpl_48),
+    (c.d_desc_trab || 0) + (c.d_fer_trab || 0), xH(c.h_hhee || 0),
+    cd ? cd.label : "Sin deuda", cn ? cn.label : "Sin deuda"
+  ];
+}
+const ANCHOS_RESUMEN = [8, 30, 22, 28, 22, 11, 11, 8, 6, 6, 6, 6, 9, 9, 6, 8, 6, 8, 6, 8, 8, 9, 7, 8, 6, 8, 7, 8, 9, 9, 10, 8, 10, 9, 10, 9, 16, 16];
+
+function exportarResumenExcel(colaboradores, nombreArchivo) {
+  const wb = XLSX.utils.book_new();
+  const filas = [COLS_RESUMEN, ...[...colaboradores].sort((a, b) => b.deuda_neta - a.deuda_neta).map(filaResumen)];
+  XLSX.utils.book_append_sheet(wb, hojaExcel(filas, ANCHOS_RESUMEN), "Resumen");
+  XLSX.writeFile(wb, nombreArchivo + ".xlsx");
+}
+
+function exportarCausasExcel(colaboradores, nombreArchivo) {
+  const wb = XLSX.utils.book_new();
+  const nuevo = () => ({ n: 0, ...nuevoBloque(), h_deb: 0, h_real: 0, deuda: 0, exc: 0, deficit: 0, dn: 0, uos: {} });
+  const sumar = (g, c) => {
+    g.n++; sumarBloque(g, c); g.h_deb += c.h_deb; g.h_real += c.h_real; g.deuda += c.deuda_op; g.exc += c.excedente || 0; g.deficit += c.deficit_48; g.dn += c.deuda_neta;
+  };
+  const gerMap = {}, total = nuevo();
+  colaboradores.forEach(c => {
+    if (!gerMap[c.gerencia]) gerMap[c.gerencia] = nuevo();
+    const g = gerMap[c.gerencia];
+    sumar(g, c); sumar(total, c);
+    const uo = c.uo || "Sin UO";
+    if (!g.uos[uo]) g.uos[uo] = nuevo();
+    sumar(g.uos[uo], c);
+  });
+  const fila = (nombre, g) => [nombre, g.n, ...BLOQUE.flatMap(b => [g[b.kd], xH(g[b.kh])]),
+    xH(g.deuda), xH(g.exc), xPct(g.h_deb > 0 ? g.h_real / g.h_deb * 100 : 0), xH(g.deficit), xH(g.dn),
+    xPct((g.h_deb + g.deficit) > 0 ? Math.min(100, g.h_real / (g.h_deb + g.deficit) * 100) : 0)];
+  const filas1 = [["Gerencia / UO", "N", ...COLS_BLOQUE, "Deuda", "Excedente", "Cumpl.Prog.", "Déf.48h", "Deuda Neta", "Cumpl.48h"]];
+  Object.entries(gerMap).sort((a, b) => b[1].dn - a[1].dn).forEach(([ger, g]) => {
+    filas1.push(fila(ger, g));
+    Object.entries(g.uos).sort((a, b) => b[1].dn - a[1].dn).forEach(([uo, u]) => filas1.push(fila("    ↳ " + uo, u)));
+  });
+  filas1.push(fila("TOTAL", total));
+  const ws1 = XLSX.utils.aoa_to_sheet(filas1);
+  ws1["!cols"] = [40, 6, ...COLS_BLOQUE.map(() => 8), 9, 9, 10, 9, 10, 9].map(w => ({ wch: w }));
+  XLSX.utils.book_append_sheet(wb, ws1, "Por Gerencia");
+  const filas2 = [COLS_RESUMEN, ...[...colaboradores].sort((a, b) => b.deuda_neta - a.deuda_neta).map(filaResumen)];
+  XLSX.utils.book_append_sheet(wb, hojaExcel(filas2, ANCHOS_RESUMEN), "Por Colaborador");
+  XLSX.writeFile(wb, nombreArchivo + ".xlsx");
+}
+
+// ─── COMPONENTES UI ───────────────────────────────────────────────────────────
+function Spinner() {
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 12,
+      padding: 40
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: 32,
+      height: 32,
+      borderRadius: "50%",
+      border: `2px solid ${C.border}`,
+      borderTopColor: C.accent,
+      animation: "spin 0.8s linear infinite"
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: C.textoMuted,
+      fontSize: 13
+    }
+  }, "Procesando datos..."));
+}
+function KpiCard({
+  label,
+  value,
+  sub,
+  color
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: C.surface,
+      border: BRD,
+      borderRadius: 12,
+      padding: "16px 18px",
+      boxShadow: "0 1px 3px rgba(0,0,0,0.04)"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: C.textoMuted,
+      marginBottom: 8,
+      fontWeight: 500,
+      textTransform: "uppercase",
+      letterSpacing: "0.05em"
+    }
+  }, label), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 26,
+      fontWeight: 600,
+      color: color || C.texto,
+      letterSpacing: "-0.02em"
+    }
+  }, value), sub && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: C.textoSec,
+      marginTop: 4
+    }
+  }, sub));
+}
+function Card({
+  title,
+  children,
+  style,
+  titleRight
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: C.surface,
+      border: BRD,
+      borderRadius: 12,
+      overflow: "hidden",
+      boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+      ...style
+    }
+  }, title && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "12px 16px",
+      borderBottom: BRD,
+      fontSize: 13,
+      fontWeight: 600,
+      color: C.texto,
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center"
+    }
+  }, /*#__PURE__*/React.createElement("span", null, title), titleRight), children);
+}
+function Barra({
+  val,
+  max,
+  color,
+  height = 5
+}) {
+  const pct = max > 0 ? Math.min(val / max * 100, 100) : 0;
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "#F0F0F0",
+      borderRadius: 3,
+      height,
+      width: "100%"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: color,
+      width: `${pct}%`,
+      height,
+      borderRadius: 3,
+      transition: "width 0.3s"
+    }
+  }));
+}
+function getCausaDeuda(c) {
+  const causas = [
+    {label:"Sin marcación",h:c.h_smrc,color:"#991B1B",bg:"#FEE2E2"},
+    {label:"Tardanzas",h:c.h_tard,color:"#92400E",bg:"#FEF3C7"},
+    {label:"Sal. anticipadas",h:c.h_antic,color:"#7C2D12",bg:"#FED7AA"},
+    {label:"Tard. tolerada",h:c.h_tol,color:"#854D0E",bg:"#FEF9C3"},
+  ].filter(x=>x.h>0).sort((a,b)=>b.h-a.h);
+  return causas[0]||null;
+}
+function getCausaDN(c) {
+  if (c.deuda_neta !== undefined && c.deuda_neta <= 0) return null;
+  const cd = getCausaDeuda(c);
+  if (!cd && c.deficit_48>0) return {label:"Déficit 48h",color:"#1E40AF",bg:"#EFF6FF"};
+  if (cd && c.deficit_48>cd.h) return {label:"Déficit 48h",color:"#1E40AF",bg:"#EFF6FF"};
+  return cd;
+}
+function CausaBadge({c}) {
+  const top = getCausaDN(c);
+  if (!top) return /*#__PURE__*/React.createElement("span",{style:{color:C.ok,fontSize:11,fontWeight:500}},"✓ Sin deuda");
+  return /*#__PURE__*/React.createElement("span",{style:{background:top.bg,color:top.color,fontSize:11,padding:"2px 8px",borderRadius:4,fontWeight:500}},top.label);
+}
+function CausaDeudaBadge({c}) {
+  const top = getCausaDeuda(c);
+  if (!top) return /*#__PURE__*/React.createElement("span",{style:{color:C.ok,fontSize:11,fontWeight:500}},"✓");
+  return /*#__PURE__*/React.createElement("span",{style:{background:top.bg,color:top.color,fontSize:11,padding:"2px 8px",borderRadius:4,fontWeight:500}},top.label);
+}
+function CausaDNBadge({c}) {
+  const top = getCausaDN(c);
+  if (!top) return /*#__PURE__*/React.createElement("span",{style:{color:C.ok,fontSize:11,fontWeight:500}},"✓");
+  return /*#__PURE__*/React.createElement("span",{style:{background:top.bg,color:top.color,fontSize:11,padding:"2px 8px",borderRadius:4,fontWeight:500}},top.label);
+}
+
+function TareoTabla({
+  tareo
+}) {
+  if (!tareo || !tareo.length) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: 24,
+      textAlign: "center",
+      color: C.textoMuted,
+      fontSize: 13
+    }
+  }, "Sin datos");
+  const cols = ["Fecha", "Día", "Tipo", "Horario", "H.Prog.", "Refrigerio", "H.Deb.", "Ingreso", "Salida", "H.Trab.", "Tardanza", "Tard.Tol.", "Sal.Ant.", "Excedente", "Deuda", "Estado"];
+  const centradas = ["H.Trab.", "Tardanza", "Tard.Tol.", "Sal.Ant.", "Excedente", "Deuda"];
+  return /*#__PURE__*/React.createElement("div", {
+    className: "tabla-fija fija-1",
+    style: {
+      overflowX: "auto"
+    }
+  }, /*#__PURE__*/React.createElement("table", {
+    style: {
+      width: "100%",
+      borderCollapse: "collapse",
+      fontSize: 12
+    }
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
+    style: {
+      background: C.surfaceHigh
+    }
+  }, cols.map(h => /*#__PURE__*/React.createElement("th", {
+    key: h,
+    style: {
+      padding: "7px 10px",
+      fontWeight: 600,
+      color: C.textoMuted,
+      fontSize: 10,
+      whiteSpace: "nowrap",
+      borderBottom: BRD,
+      textTransform: "uppercase",
+      letterSpacing: "0.04em",
+      textAlign: centradas.includes(h) ? "center" : "left"
+    }
+  }, h)))), /*#__PURE__*/React.createElement("tbody", null, tareo.map((d, i) => {
+    const est = ESTADO_STYLE[d.estado] || ESTADO_STYLE.OK;
+    const esDesc = d.estado === "DESCANSO";
+    return /*#__PURE__*/React.createElement("tr", {
+      key: d.fecha,
+      style: {
+        background: esDesc ? "#FAFAFA" : i % 2 === 0 ? C.surface : C.surfaceHigh,
+        borderBottom: `0.5px solid ${C.border}20`,
+        opacity: esDesc ? 0.6 : 1
+      }
+    }, /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        fontWeight: 500,
+        whiteSpace: "nowrap",
+        color: esDesc ? C.textoMuted : C.texto
+      }
+    }, fmtFechaCorta(d.fecha)), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        color: C.textoSec
+      }
+    }, d.diaSem), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px"
+      }
+    }, esDesc || d.tipo === "DESCANSO" ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        color: C.textoMuted
+      }
+    }, "—") : d.tipo === "REMOTO" ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        background: "#D1FAE5",
+        color: "#065F46",
+        fontSize: 10,
+        padding: "2px 6px",
+        borderRadius: 3
+      }
+    }, "Remoto") : /*#__PURE__*/React.createElement("span", {
+      style: {
+        background: "#DBEAFE",
+        color: "#1E40AF",
+        fontSize: 10,
+        padding: "2px 6px",
+        borderRadius: 3
+      }
+    }, "Presencial")), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        color: C.textoSec,
+        whiteSpace: "nowrap"
+      }
+    }, d.horProg || "—"),
+    /*#__PURE__*/React.createElement("td", {
+      style: { padding: "7px 10px", color: esDesc ? C.textoMuted : C.textoSec, whiteSpace: "nowrap", fontSize: 12 }
+    }, esDesc ? "—" : d.hProg || "—"),
+    /*#__PURE__*/React.createElement("td", {
+      style: { padding: "7px 10px", textAlign: "center", color: esDesc ? C.textoMuted : "#7C3AED", fontSize: 12 }
+    }, esDesc ? "—" : d.refrig || (d.tipo !== "DESCANSO" ? "00:00" : "—")),
+    /*#__PURE__*/React.createElement("td", {
+      style: { padding: "7px 10px", textAlign: "center", color: esDesc ? C.textoMuted : C.texto, fontWeight: 600, fontSize: 12 }
+    }, esDesc ? "—" : d.hDeb || "—"),
+    /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        color: esDesc || d.estado === "FERIADO" || d.estado === "ABSENTISMO" ? C.textoMuted : d.ingAutomatic ? C.danger : d.ing != null ? C.texto : C.textoMuted,
+        fontWeight: d.ingAutomatic ? 600 : 400,
+        whiteSpace: "nowrap"
+      }
+    }, esDesc || d.estado === "FERIADO" || d.estado === "ABSENTISMO" ? "—" : d.ing != null ? minToHHMM(d.ing) : "—"), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        color: esDesc || d.estado === "FERIADO" || d.estado === "ABSENTISMO" ? C.textoMuted : d.salAutomatic ? C.danger : d.sal != null ? C.texto : C.textoMuted,
+        fontWeight: d.salAutomatic ? 600 : 400,
+        whiteSpace: "nowrap"
+      }
+    }, esDesc || d.estado === "FERIADO" || d.estado === "ABSENTISMO" ? "—" : d.sal != null ? minToHHMM(d.sal) : "—"), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        textAlign: "center",
+        color: d.trab_min > 0 ? C.ok : C.textoMuted
+      }
+    }, minDia(d, "trab_min")), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        textAlign: "center",
+        color: d.tard_min > 0 ? C.warning : C.textoMuted,
+        fontWeight: d.tard_min > 0 ? 500 : 400
+      }
+    }, minDia(d, "tard_min")), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        textAlign: "center",
+        color: d.tol_min > 0 ? "#854D0E" : C.textoMuted,
+        fontWeight: d.tol_min > 0 ? 500 : 400
+      }
+    }, minDia(d, "tol_min")), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        textAlign: "center",
+        color: d.antic_min > 0 ? "#EA580C" : C.textoMuted,
+        fontWeight: d.antic_min > 0 ? 500 : 400
+      }
+    }, minDia(d, "antic_min")), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        textAlign: "center",
+        fontWeight: d.excedente_min > 0 ? 500 : 400,
+        color: d.excedente_min > 0 ? C.ok : C.textoMuted
+      }
+    }, minDia(d, "excedente_min")), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        textAlign: "center",
+        fontWeight: d.deuda_min > 0 ? 600 : 400,
+        color: d.deuda_min > 0 ? C.danger : C.textoMuted
+      }
+    }, minDia(d, "deuda_min")), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 2
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        background: est.bg,
+        color: est.color,
+        fontSize: 10,
+        padding: "2px 7px",
+        borderRadius: 3,
+        fontWeight: 500,
+        whiteSpace: "nowrap"
+      }
+    }, d.estado === "ABSENTISMO" ? d.obs || "Absentismo" : d.absInj ? "Falta injustificada" : est.label), d.absInj && /*#__PURE__*/React.createElement("span", {
+      style: {
+        background: "#FEE2E2",
+        color: "#991B1B",
+        fontSize: 9,
+        padding: "1px 5px",
+        borderRadius: 3
+      }
+    }, d.absInj), d.absObs && /*#__PURE__*/React.createElement("span", {
+      style: {
+        background: "#EDE9FE",
+        color: "#5B21B6",
+        fontSize: 9,
+        padding: "1px 5px",
+        borderRadius: 3
+      }
+    }, "⚠ Marc. en ", d.absObs), (d.estado === "DESC_TRAB" || d.estado === "FER_TRAB") && d.marcaIncompleta && /*#__PURE__*/React.createElement("span", {
+      style: {
+        background: "#FEF3C7",
+        color: "#92400E",
+        fontSize: 9,
+        padding: "1px 5px",
+        borderRadius: 3
+      }
+    }, "Marca incompleta"))));
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      borderTop: `2px solid ${C.border}`,
+      padding: "10px 14px",
+      background: C.surfaceHigh,
+      display: "flex",
+      gap: 20,
+      flexWrap: "wrap"
+    }
+  }, [["Días lab.", tareo.filter(d => !["DESCANSO", "FERIADO", "ABSENTISMO", "DESC_TRAB", "FER_TRAB"].includes(d.estado)).length, "#333"], ["Desc.", tareo.filter(d => d.estado === "DESCANSO" || d.estado === "DESC_TRAB").length, C.textoMuted], ["Feriados", tareo.filter(d => d.estado === "FERIADO" || d.estado === "FER_TRAB").length, C.info], ["Abs.", tareo.filter(d => d.estado === "ABSENTISMO").length, "#7C3AED"], ["Desc./Fer. trab.", tareo.filter(d => d.estado === "DESC_TRAB" || d.estado === "FER_TRAB").length, "#075985"], ["HHEE inf.", fmtH(tareo.reduce((s, d) => s + (d.hhee_min || 0), 0) / 60), "#075985"], ["Excedente", `${fmtH(tareo.reduce((s, d) => s + (d.excedente_min || 0), 0) / 60)}`, C.ok], ["S/Marc", tareo.filter(d => d.estado === "SIN_MARC").length, C.danger], ["Marc.Inc.", tareo.filter(d => d.estado === "MARC_INC").length, C.info], ["c/Tardanza", tareo.filter(d => d.tard_min > 0).length, C.warning], ["c/Tard. tol.", tareo.filter(d => d.tol_min > 0).length, "#854D0E"], ["c/Sal.Ant.", tareo.filter(d => d.antic_min > 0).length, "#EA580C"]].map(([l, v, col]) => /*#__PURE__*/React.createElement("div", {
+    key: l,
+    style: {
+      textAlign: "center"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: C.textoMuted
+    }
+  }, l), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 16,
+      fontWeight: 600,
+      color: col
+    }
+  }, v)))));
+}
+
+// ─── RESUMEN INDIVIDUAL ───────────────────────────────────────────────────────
+function ResumenIndividual({
+  c
+}) {
+  const filas = [{
+    label: "PERÍODO",
+    tipo: "header"
+  }, {
+    label: "D. Total período",
+    val: c.tareo.length
+  }, {
+    label: "D. Laborables",
+    val: c.d_lab
+  }, {
+    label: "D. Descanso",
+    val: c.d_desc
+  }, {
+    label: "D. Feriados",
+    val: c.d_fer
+  }, {
+    label: "D. Absentismos",
+    val: c.d_abs
+  }, {
+    label: "HORAS",
+    tipo: "header"
+  }, {
+    label: "H. Debidas",
+    val: fmtH(c.h_deb),
+    color: C.texto
+  }, {
+    label: "H. Reales",
+    val: fmtH(c.h_real),
+    color: C.ok
+  }, {
+    label: "Excedente (H.Real − H.Deb.)",
+    val: fmtH(c.excedente || 0),
+    color: "#16A34A"
+  }, {
+    label: "Desc./Fer. trabajados",
+    val: (c.d_desc_trab || 0) + (c.d_fer_trab || 0),
+    color: "#075985"
+  }, {
+    label: "HHEE informativas",
+    val: fmtH(c.h_hhee || 0),
+    color: "#075985"
+  }, {
+    label: "MARCACIONES (días · horas)",
+    tipo: "header"
+  }, ...BLOQUE.map(b => ({
+    label: b.titulo,
+    val: `${c[b.kd] || 0} d · ${fmtH(c[b.kh] || 0)}`,
+    color: c[b.kh] > 0 ? b.color : C.textoMuted
+  })), {
+    label: "Nota",
+    val: "MC, Remoto y MI = horas trabajadas · resto = horas de deuda",
+    color: C.textoMuted
+  }, {
+    label: "DEUDA",
+    tipo: "header"
+  }, {
+    label: "Deuda (H.Deb. − H.Reales)",
+    val: fmtH(c.deuda_op),
+    color: C.warning
+  }, {
+    label: "% Cumpl. Prog.",
+    val: fmtPct(c.cumpl_jornada),
+    color: c.cumpl_jornada < 80 ? C.danger : C.ok
+  }, {
+    label: "Déficit 48h",
+    val: fmtH(c.deficit_48),
+    color: C.info
+  }, {
+    label: "Deuda Neta (Deuda + Déficit − Excedente)",
+    val: fmtH(c.deuda_neta),
+    color: C.danger,
+    bold: true
+  }, {
+    label: "% Cumpl. 48h",
+    val: fmtPct(c.cumpl_48),
+    color: c.cumpl_48 < 80 ? C.danger : C.ok,
+    bold: true
+  }, {
+    label: "Días equiv. DN",
+    val: `${(c.deuda_neta / 8).toFixed(1)}d`,
+    color: C.danger
+  }];
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      overflowX: "auto"
+    }
+  }, /*#__PURE__*/React.createElement("table", {
+    style: {
+      width: "100%",
+      borderCollapse: "collapse",
+      fontSize: 12
+    }
+  }, /*#__PURE__*/React.createElement("tbody", null, filas.map((f, i) => {
+    if (f.tipo === "header") return /*#__PURE__*/React.createElement("tr", {
+      key: f.label
+    }, /*#__PURE__*/React.createElement("td", {
+      colSpan: 2,
+      style: {
+        padding: "8px 14px",
+        background: "#F0FDF4",
+        color: C.accent,
+        fontWeight: 700,
+        fontSize: 11,
+        textTransform: "uppercase",
+        letterSpacing: "0.05em",
+        borderTop: i > 0 ? `1px solid ${C.border}` : "none"
+      }
+    }, f.label));
+    return /*#__PURE__*/React.createElement("tr", {
+      key: f.label,
+      style: {
+        borderBottom: `0.5px solid ${C.border}20`,
+        background: i % 2 === 0 ? C.surface : C.surfaceHigh
+      }
+    }, /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "6px 14px",
+        color: C.textoSec,
+        fontSize: 12
+      }
+    }, f.label), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "6px 14px",
+        color: f.color || C.texto,
+        fontWeight: f.bold ? 700 : 500,
+        textAlign: "right",
+        fontSize: 12
+      }
+    }, f.val));
+  }))));
+}
+
+// ─── IMPORTACIÓN ─────────────────────────────────────────────────────────────
+function PaginaImportacion({
+  onCargado,
+  guardado,
+  onRestaurar,
+  procesando,
+  setProcesando
+}) {
+  const [files, setFiles] = useState({});
+  const [fechaCorte, setFechaCorte] = useState("");
+  const ARCHIVOS = [{
+    id: "base",
+    label: "01 — Base de datos",
+    hint: "BASE DE DATOS"
+  }, {
+    id: "marcaciones",
+    label: "02 — Marcaciones",
+    hint: "MARCACIONES"
+  }, {
+    id: "prog",
+    label: "03 — Programación",
+    hint: "PROGRAMACIÓN"
+  }, {
+    id: "absentismos",
+    label: "04 — Absentismos",
+    hint: "ABSENTISMOS"
+  }, {
+    id: "feriados",
+    label: "05 — Feriados",
+    hint: "FERIADOS"
+  }, {
+    id: "teletrabajo",
+    label: "06 — Teletrabajo (opcional)",
+    hint: "TELETRABAJO"
+  }, {
+    id: "refrigerio",
+    label: "07 — Refrigerio (opcional)",
+    hint: "REFRIGERIO"
+  }];
+  const [msgCarga, setMsgCarga] = useState(null);
+  // Reconocer archivo solo por nombre exacto (sin importar mayúsculas ni tildes)
+  const NOMBRES_EXACTOS = {
+    "01. base de datos": "base",
+    "02. marcaciones": "marcaciones",
+    "03. programacion": "prog",
+    "04. absentismos": "absentismos",
+    "05. feriados": "feriados",
+    "06. teletrabajo": "teletrabajo",
+    "07. refrigerio": "refrigerio"
+  };
+  const detectarTipo = nombre => {
+    const n = String(nombre || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/\.xlsx?$/, "").replace(/\s+/g, " ").trim();
+    return NOMBRES_EXACTOS[n] || null;
+  };
+  const handleVarios = lista => {
+    const arr = Array.from(lista || []).filter(f => /\.xlsx?$/i.test(f.name) && !f.name.startsWith("~$"));
+    const ok = [], noRec = [];
+    setFiles({});
+    arr.forEach(f => {
+      const id = detectarTipo(f.name);
+      if (id) { handleFile(id, f); ok.push(f.name); } else noRec.push(f.name);
+    });
+    setMsgCarga({ ok, noRec });
+  };
+  const handleFile = (id, file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      const ab = new Uint8Array(e.target.result);
+      setFiles(prev => ({
+        ...prev,
+        [id]: {
+          ...file,
+          name: file.name,
+          _ab: ab
+        }
+      }));
+    };
+    reader.readAsArrayBuffer(file);
+  };
+  const obligatorios = ["base", "marcaciones", "prog", "absentismos", "feriados"];
+  const listo = obligatorios.every(a => files[a]);
+  const procesar = async () => {
+    setProcesando(true);
+    await new Promise(r => setTimeout(r, 50));
+    try {
+      const r = procesarDatos(files, fechaCorte || null);
+      onCargado(r, fechaCorte || null);
+    } catch (err) {
+      alert("Error al procesar: " + err.message);
+      console.error(err);
+    } finally {
+      setProcesando(false);
+    }
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxWidth: 680,
+      margin: "0 auto"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 24
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 22,
+      fontWeight: 600,
+      color: C.texto,
+      marginBottom: 4
+    }
+  }, "Importar archivos"), guardado && guardado.orig && /*#__PURE__*/React.createElement("div", {
+    style: { margin: "12px 0", padding: "12px 14px", borderRadius: 10, border: `1px solid ${C.accent}`, background: "#F0FDF4", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }
+  }, /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: C.textoSec } },
+    /*#__PURE__*/React.createElement("div", { style: { fontWeight: 600, color: C.texto, marginBottom: 2 } }, "Último análisis guardado"),
+    `${fmtFecha(guardado.orig.periodo.inicio)} → ${fmtFecha(guardado.orig.periodo.finOriginal)} · ${guardado.orig.colaboradores.length} colaboradores · guardado el ${new Date(guardado.guardado).toLocaleString("es-PE")}`
+  ), /*#__PURE__*/React.createElement("button", {
+    onClick: onRestaurar,
+    style: { padding: "8px 16px", borderRadius: 8, border: "none", background: C.accent, color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }
+  }, "Abrir último análisis")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      color: C.textoSec
+    }
+  }, "Selecciona la carpeta con los Excel. Se cargan solo los archivos con el nombre exacto: 01. Base de datos, 02. Marcaciones, 03. Programación, 04. Absentismos, 05. Feriados, 06. Teletrabajo, 07. Refrigerio. El resto se omite.")), /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", gap: 10, marginBottom: 12 }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: { flex: 1, padding: "12px 14px", borderRadius: 10, border: "none", background: C.accent, color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "center" }
+  }, "📁 Seleccionar carpeta", /*#__PURE__*/React.createElement("input", {
+    type: "file",
+    webkitdirectory: "",
+    directory: "",
+    multiple: true,
+    style: { display: "none" },
+    onChange: e => { handleVarios(e.target.files); e.target.value = ""; }
+  }))), msgCarga && /*#__PURE__*/React.createElement("div", {
+    style: { marginBottom: 12, padding: "10px 14px", borderRadius: 8, fontSize: 12, background: msgCarga.noRec.length ? "#FFFBEB" : "#F0FDF4", border: `0.5px solid ${msgCarga.noRec.length ? "#FCD34D" : "#86EFAC"}`, color: C.textoSec }
+  }, `✓ ${msgCarga.ok.length} archivo(s) reconocido(s)`, msgCarga.noRec.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: { marginTop: 4, color: "#92400E" }
+  }, `No reconocidos: ${msgCarga.noRec.join(", ")}`), obligatorios.filter(a => !files[a]).length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: { marginTop: 4, color: C.danger }
+  }, `Faltan: ${ARCHIVOS.filter(a => obligatorios.includes(a.id) && !files[a.id]).map(a => a.label).join(", ")}`)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 10,
+      marginBottom: 16
+    }
+  }, ARCHIVOS.map(a => /*#__PURE__*/React.createElement("div", {
+    key: a.id,
+    style: {
+      background: C.surface,
+      border: `0.5px solid ${files[a.id] ? C.accent : C.border}`,
+      borderRadius: 10,
+      padding: "14px 16px",
+      display: "flex",
+      alignItems: "center",
+      gap: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: 36,
+      height: 36,
+      borderRadius: 8,
+      background: files[a.id] ? "#F0FDF4" : "#F5F5F5",
+      border: `0.5px solid ${files[a.id] ? C.accent : C.border}`,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      fontSize: 18,
+      flexShrink: 0
+    }
+  }, files[a.id] ? "✓" : "📄"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 500,
+      color: C.texto
+    }
+  }, a.label), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: C.textoMuted
+    }
+  }, files[a.id] ? files[a.id].name : `Hoja: ${a.hint}`)), /*#__PURE__*/React.createElement("span", {
+    style: {
+      padding: "4px 12px",
+      borderRadius: 20,
+      fontSize: 11,
+      fontWeight: 600,
+      whiteSpace: "nowrap",
+      background: files[a.id] ? "#F0FDF4" : obligatorios.includes(a.id) ? "#FEF2F2" : "#F5F5F5",
+      color: files[a.id] ? C.accent : obligatorios.includes(a.id) ? C.danger : C.textoMuted
+    }
+  }, files[a.id] ? "✓ Cargado" : obligatorios.includes(a.id) ? "Pendiente" : "Opcional")))), /*#__PURE__*/React.createElement("button", {
+    onClick: procesar,
+    disabled: !listo || procesando,
+    style: {
+      width: "100%",
+      padding: 12,
+      borderRadius: 10,
+      border: "none",
+      background: listo && !procesando ? C.accent : "#D1D5DB",
+      color: "#fff",
+      fontSize: 14,
+      fontWeight: 600,
+      cursor: listo && !procesando ? "pointer" : "not-allowed"
+    }
+  }, procesando ? "⟳ Procesando..." : "Calcular análisis de jornada →"));
+}
+
+// ─── DASHBOARD ───────────────────────────────────────────────────────────────
+function PaginaDashboard({
+  datos,
+  onSelectColab,
+  setPagina
+}) {
+  const {
+    colaboradores
+  } = datos;
+  const total = {
+    n: colaboradores.length,
+    h_deb: colaboradores.reduce((s, c) => s + c.h_deb, 0),
+    h_real: colaboradores.reduce((s, c) => s + c.h_real, 0),
+    dn: colaboradores.reduce((s, c) => s + c.deuda_neta, 0),
+    h_smrc: colaboradores.reduce((s, c) => s + c.h_smrc, 0),
+    h_tard: colaboradores.reduce((s, c) => s + c.h_tard, 0),
+    h_antic: colaboradores.reduce((s, c) => s + c.h_antic, 0),
+    h_mi: colaboradores.reduce((s, c) => s + c.h_mi, 0),
+    deficit: colaboradores.reduce((s, c) => s + c.deficit_48, 0),
+    deuda: colaboradores.reduce((s, c) => s + c.deuda_op, 0)
+  };
+  const cumpl_48 = total.h_deb > 0 ? (total.h_real / (total.h_deb + total.deficit) * 100).toFixed(1) : 0;
+  const cumpl_prog = total.h_deb > 0 ? total.h_real / total.h_deb * 100 : 0;
+  const nSinMarc = colaboradores.filter(c => c.d_smrc > 0).length;
+  const [verAlerta, setVerAlerta] = useState(null);
+  // Alertas: las de lectura de archivos + las que dependen del corte actual
+  const alertas = [...(datos.alertas || [])];
+  const sinHoras = colaboradores.filter(c => c.h_deb > 0 && c.h_real === 0);
+  if (sinHoras.length) alertas.push({ nivel: "aviso", msg: `${sinHoras.length} colaborador(es) con 0 horas trabajadas en todo el período (¿no marcan, están exonerados o falta su data?)`, detalle: sinHoras.map(c => `${c.cod} · ${c.nombre} · ${c.gerencia} · ${fmtH(c.h_deb)} debidas`) });
+  const conTrabLibre = colaboradores.filter(c => (c.d_desc_trab || 0) + (c.d_fer_trab || 0) > 0);
+  if (conTrabLibre.length) alertas.push({ nivel: "info", msg: `${conTrabLibre.length} colaborador(es) marcaron en descanso o feriado (HHEE informativas: ${fmtH(conTrabLibre.reduce((s, c) => s + (c.h_hhee || 0), 0))})`, detalle: conTrabLibre.map(c => `${c.cod} · ${c.nombre} · ${(c.d_desc_trab || 0) + (c.d_fer_trab || 0)} día(s) · ${fmtH(c.h_hhee || 0)}`) });
+  const gerMap = {};
+  colaboradores.forEach(c => {
+    if (!gerMap[c.gerencia]) gerMap[c.gerencia] = {
+      n: 0,
+      h_deb: 0,
+      h_real: 0,
+      dn: 0,
+      deficit: 0
+    };
+    const g = gerMap[c.gerencia];
+    g.n++;
+    g.h_deb += c.h_deb;
+    g.h_real += c.h_real;
+    g.dn += c.deuda_neta;
+    g.deficit += c.deficit_48;
+  });
+  const gerencias = Object.entries(gerMap).map(([ger, g]) => ({
+    ger,
+    ...g,
+    cumpl: g.h_deb > 0 ? (g.h_real / (g.h_deb + g.deficit) * 100).toFixed(1) : 0
+  })).sort((a, b) => b.dn - a.dn);
+  const maxDN = gerencias[0]?.dn || 1;
+  // Causas de deuda (MC y Remoto no son causas: son horas trabajadas)
+  const sumD = k => colaboradores.reduce((s, c) => s + (c[k] || 0), 0);
+  const sumH = k => colaboradores.reduce((s, c) => s + (c[k] || 0), 0);
+  const causas = [...BLOQUE.filter(b => !["d_mc", "d_rem", "d_mi"].includes(b.kd)).map(b => ({
+    label: b.titulo,
+    h: sumH(b.kh),
+    d: sumD(b.kd),
+    n: colaboradores.filter(c => c[b.kd] > 0).length,
+    color: b.color
+  })), {
+    label: "Déficit 48h",
+    h: total.deficit,
+    d: null,
+    n: colaboradores.filter(c => c.deficit_48 > 0).length,
+    color: "#1D4ED8"
+  }].filter(x => x.h > 0).sort((a, b) => b.h - a.h);
+  const maxCausa = causas.reduce((s, x) => s + x.h, 0) || 1;
+  const top10 = [...colaboradores].sort((a, b) => b.deuda_neta - a.deuda_neta).slice(0, 10);
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "repeat(6,1fr)",
+      gap: 12
+    }
+  }, /*#__PURE__*/React.createElement(KpiCard, {
+    label: "Deuda Neta total",
+    value: fmtH(total.dn),
+    sub: `${total.n} colaboradores`,
+    color: C.danger
+  }), /*#__PURE__*/React.createElement(KpiCard, {
+    label: "Deuda",
+    value: fmtH(total.deuda),
+    sub: `+ Déf. 48h ${fmtH(total.deficit)} · Exc. ${fmtH(colaboradores.reduce((s, c) => s + (c.excedente || 0), 0))}`,
+    color: C.warning
+  }), /*#__PURE__*/React.createElement(KpiCard, {
+    label: "Cumpl. Prog.",
+    value: fmtPct(cumpl_prog),
+    sub: "H. trab. / H. debidas",
+    color: cumpl_prog >= 80 ? C.ok : cumpl_prog >= 50 ? C.warning : C.danger
+  }), /*#__PURE__*/React.createElement(KpiCard, {
+    label: "Cumplimiento 48h",
+    value: fmtPct(cumpl_48),
+    sub: `H. real: ${fmtH(total.h_real)}`,
+    color: parseFloat(cumpl_48) > 80 ? C.ok : C.warning
+  }), /*#__PURE__*/React.createElement(KpiCard, {
+    label: "H. debidas",
+    value: fmtH(total.h_deb),
+    sub: `${fmtFecha(datos.periodo.inicio)} → ${fmtFecha(datos.periodo.fin)}`,
+    color: C.info
+  }), /*#__PURE__*/React.createElement(KpiCard, {
+    label: "Sin marcación",
+    value: fmtH(total.h_smrc),
+    sub: `${nSinMarc} colaboradores afectados`,
+    color: C.danger
+  })), alertas.length > 0 && /*#__PURE__*/React.createElement(Card, {
+    title: `Alertas de datos (${alertas.length})`
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { padding: "8px 16px 12px", display: "flex", flexDirection: "column", gap: 6 }
+  }, alertas.map((a, i) => /*#__PURE__*/React.createElement("div", {
+    key: i
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: () => a.detalle && a.detalle.length && setVerAlerta(verAlerta === i ? null : i),
+    style: { fontSize: 12, padding: "6px 10px", borderRadius: 6, cursor: a.detalle && a.detalle.length ? "pointer" : "default",
+      background: a.nivel === "error" ? "#FEE2E2" : a.nivel === "aviso" ? "#FEF3C7" : "#E0F2FE",
+      color: a.nivel === "error" ? "#991B1B" : a.nivel === "aviso" ? "#92400E" : "#075985" }
+  }, a.nivel === "error" ? "⛔ " : a.nivel === "aviso" ? "⚠ " : "ℹ ", a.msg, a.detalle && a.detalle.length ? (verAlerta === i ? "  ▲" : "  ▼ ver") : ""),
+  verAlerta === i && /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 11, color: C.textoSec, padding: "6px 14px", maxHeight: 220, overflowY: "auto", lineHeight: 1.7 }
+  }, a.detalle.map((t, k) => /*#__PURE__*/React.createElement("div", { key: k }, t))))))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "1.2fr 1fr",
+      gap: 12
+    }
+  }, /*#__PURE__*/React.createElement(Card, {
+    title: "Ranking por gerencia — Cumplimiento 48h (ordenado por Deuda Neta)"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "14px 16px",
+      display: "flex",
+      flexDirection: "column",
+      gap: 12
+    }
+  }, gerencias.map(g => /*#__PURE__*/React.createElement("div", {
+    key: g.ger
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      justifyContent: "space-between",
+      marginBottom: 4
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12,
+      fontWeight: 500,
+      color: GER_COLOR[g.ger] || C.texto
+    }
+  }, g.ger), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: C.textoSec
+    }
+  }, "Cumpl. 48h ", /*#__PURE__*/React.createElement("b", {
+    style: { color: parseFloat(g.cumpl) < 50 ? C.danger : parseFloat(g.cumpl) < 80 ? C.warning : C.ok }
+  }, fmtPct(g.cumpl)), " · DN ", fmtH(g.dn))), /*#__PURE__*/React.createElement(Barra, {
+    val: parseFloat(g.cumpl),
+    max: 100,
+    color: parseFloat(g.cumpl) < 50 ? C.danger : parseFloat(g.cumpl) < 80 ? C.warning : C.ok
+  }))))), /*#__PURE__*/React.createElement(Card, {
+    title: "Causas de deuda"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "14px 16px",
+      display: "flex",
+      flexDirection: "column",
+      gap: 12
+    }
+  }, causas.map(ca => /*#__PURE__*/React.createElement("div", {
+    key: ca.label
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      justifyContent: "space-between",
+      marginBottom: 4
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12
+    }
+  }, ca.label), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12,
+      fontWeight: 600,
+      color: ca.color
+    }
+  }, fmtH(ca.h), " (", (ca.h / maxCausa * 100).toFixed(0), "%)", ca.d !== null ? ` · ${ca.d} días` : "", " · ", ca.n, " colab.")), /*#__PURE__*/React.createElement(Barra, {
+    val: ca.h,
+    max: maxCausa,
+    color: ca.color
+  })))))), /*#__PURE__*/React.createElement("div", {
+    style: {display:"flex",justifyContent:"flex-end",gap:8,marginBottom:8}
+  },
+    React.createElement("button", {
+      onClick: ()=>exportarResumenExcel(colaboradores, `Dashboard_Jornada_${datos.periodo.fin||''}`),
+      style:{padding:"7px 14px",borderRadius:8,border:"none",background:C.accent,color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer"}
+    }, "⬇ Excel Resumen"),
+    React.createElement("button", {
+      onClick: ()=>exportarCausasExcel(colaboradores, `Causas_Jornada_${datos.periodo.fin||''}`),
+      style:{padding:"7px 14px",borderRadius:8,border:"none",background:"#1D4ED8",color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer"}
+    }, "⬇ Excel Causas")
+  ),
+  React.createElement(Card, {
+    title: "Top 10 — mayor deuda neta"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "tabla-fija",
+    style: {
+      overflowX: "auto"
+    }
+  }, /*#__PURE__*/React.createElement("table", {
+    style: {
+      width: "100%",
+      borderCollapse: "collapse",
+      fontSize: 12
+    }
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
+    style: {
+      background: C.surfaceHigh
+    }
+  }, ["#", "Colaborador", "Gerencia", "Posición", "UO", "H.Deb.", "H.Real", "Deuda", "Excedente", "Cumpl.Prog.", "Déficit 48h", "Deuda Neta", "Cumpl.48h", "Causa", ""].map(h => /*#__PURE__*/React.createElement("th", {
+    key: h,
+    style: {
+      padding: "8px 10px",
+      fontWeight: 600,
+      color: C.textoMuted,
+      fontSize: 10,
+      whiteSpace: "nowrap",
+      borderBottom: BRD,
+      textTransform: "uppercase",
+      textAlign: ["H.Deb.", "H.Real", "Deuda", "Excedente", "Cumpl.Prog.", "Déficit 48h", "Deuda Neta", "Cumpl.48h"].includes(h) ? "center" : "left"
+    }
+  }, h)))), /*#__PURE__*/React.createElement("tbody", null, top10.map((c, i) => /*#__PURE__*/React.createElement("tr", {
+    key: c.cod,
+    style: {
+      background: i % 2 === 0 ? C.surface : C.surfaceHigh,
+      borderBottom: `0.5px solid ${C.border}20`
+    }
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "8px 10px",
+      color: C.textoMuted,
+      fontWeight: 600
+    }
+  }, i + 1), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "8px 10px",
+      whiteSpace: "nowrap"
+    }
+  }, c.nombre.split(" ").slice(0, 3).join(" ")), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "8px 10px",
+      color: GER_COLOR[c.gerencia] || C.textoSec,
+      fontWeight: 500,
+      fontSize: 11
+    }
+  }, c.gerencia), /*#__PURE__*/React.createElement("td", {
+    style: {padding: "8px 10px", color: C.textoSec, fontSize: 10, whiteSpace: "nowrap"}
+  }, c.pos||"—"), /*#__PURE__*/React.createElement("td", {
+    style: {padding: "8px 10px", color: C.textoSec, fontSize: 10}
+  }, c.uo||"—"), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "8px 10px",
+      textAlign: "center",
+      color: C.textoSec
+    }
+  }, fmtH(c.h_deb)), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "8px 10px",
+      textAlign: "center",
+      color: C.ok
+    }
+  }, fmtH(c.h_real)), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "8px 10px",
+      textAlign: "center",
+      color: C.warning
+    }
+  }, fmtH(c.deuda_op)), celdaExc(c.excedente), /*#__PURE__*/React.createElement("td", {
+    style: { padding: "9px 10px", textAlign: "center", fontWeight: 600, color: c.cumpl_jornada < 50 ? C.danger : c.cumpl_jornada < 80 ? C.warning : C.ok }
+  }, fmtPct(c.cumpl_jornada)), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "8px 10px",
+      textAlign: "center",
+      color: C.info
+    }
+  }, fmtH(c.deficit_48 || 0)), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "8px 10px",
+      textAlign: "center",
+      fontWeight: 600,
+      color: C.danger
+    }
+  }, fmtH(c.deuda_neta)), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "8px 10px",
+      textAlign: "center",
+      fontWeight: 600,
+      color: c.cumpl_48 < 80 ? C.danger : C.ok
+    }
+  }, fmtPct(c.cumpl_48)), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "8px 10px"
+    }
+  }, /*#__PURE__*/React.createElement(CausaBadge, {
+    c: c
+  })), celdaDetalle(() => onSelectColab && onSelectColab(c)))))))));
+}
+
+// ─── CAUSAS DE DEUDA ─────────────────────────────────────────────────────────
+function PaginaCausas({datos}) {
+  const {colaboradores} = datos;
+  const [expandida, setExpandida] = React.useState(null);
+
+  // Agrupar por gerencia
+  const gerMap = {};
+  colaboradores.forEach(c => {
+    if (!gerMap[c.gerencia]) gerMap[c.gerencia] = {ger:c.gerencia, n:0, ...nuevoBloque(), deficit:0, dn:0, h_deb:0, h_real:0, deuda:0, uos:{}};
+    const g = gerMap[c.gerencia];
+    g.n++; sumarBloque(g, c);
+    g.deficit+=c.deficit_48; g.dn+=c.deuda_neta; g.h_deb+=c.h_deb; g.h_real+=c.h_real; g.deuda+=c.deuda_op; g.exc=(g.exc||0)+c.excedente;
+    // Agrupar por UO
+    const uo = c.uo || 'Sin UO';
+    if (!g.uos[uo]) g.uos[uo] = {uo, n:0, ...nuevoBloque(), deficit:0, dn:0, h_deb:0, h_real:0, deuda:0};
+    const u = g.uos[uo];
+    u.n++; sumarBloque(u, c);
+    u.deficit+=c.deficit_48; u.dn+=c.deuda_neta; u.h_deb+=c.h_deb; u.h_real+=c.h_real; u.deuda+=c.deuda_op; u.exc=(u.exc||0)+c.excedente;
+  });
+  const [orden, clickOrden] = useOrden("Deuda Neta", "desc");
+  const total = {n:colaboradores.length, ...(()=>{const t=nuevoBloque(); colaboradores.forEach(c=>sumarBloque(t,c)); return t;})(), deficit:colaboradores.reduce((s,c)=>s+c.deficit_48,0), dn:colaboradores.reduce((s,c)=>s+c.deuda_neta,0), h_deb:colaboradores.reduce((s,c)=>s+c.h_deb,0), h_real:colaboradores.reduce((s,c)=>s+c.h_real,0), deuda:colaboradores.reduce((s,c)=>s+c.deuda_op,0), exc:colaboradores.reduce((s,c)=>s+c.excedente,0)};
+  const cols = ["Gerencia/UO","N",...COLS_BLOQUE,"Deuda","Excedente","Cumpl.Prog.","Déf.48h","Deuda Neta","Cumpl.48h"];
+  const pctProg = r => r.h_deb > 0 ? r.h_real / r.h_deb * 100 : 0;
+  const pct48 = r => (r.h_deb + r.deficit) > 0 ? Math.min(100, r.h_real / (r.h_deb + r.deficit) * 100) : 0;
+  const colPct = v => v < 50 ? C.danger : v < 80 ? C.warning : C.ok;
+  const GET_CAUSAS = {
+    "Gerencia/UO": r => r.ger || r.uo, "N": r => r.n, ...GET_BLOQUE, "Deuda": r => r.deuda, "Excedente": r => r.exc,
+    "Cumpl.Prog.": r => pctProg(r), "Déf.48h": r => r.deficit, "Deuda Neta": r => r.dn, "Cumpl.48h": r => pct48(r)
+  };
+  const gers = ordenar(Object.values(gerMap), orden, GET_CAUSAS);
+  const E = React.createElement;
+
+  const renderFila = (r, isGer, color) => {
+    const style = isGer
+      ? {fontWeight:600, cursor:'pointer', background: expandida===r.ger ? '#F0FDF4' : (gers.indexOf(r)%2===0?C.surface:C.surfaceHigh)}
+      : {fontSize:11, background:'#F9FAFB', paddingLeft:24};
+    return E('tr', {key: (r.ger||r.uo), style:{...style, borderBottom:`0.5px solid ${C.border}20`},
+      onClick: isGer ? ()=>setExpandida(expandida===r.ger?null:r.ger) : undefined},
+      E('td',{style:{padding:'7px 10px', color: isGer?(color||C.texto):C.textoSec, paddingLeft: isGer?'10px':'28px', display:'flex', alignItems:'center', gap:4}},
+        isGer ? E('span',{style:{fontSize:10, marginRight:4}}, expandida===r.ger?'▼':'▶') : '↳',
+        ' ', (r.ger||r.uo)
+      ),
+      E('td',{style:{padding:'7px 10px',textAlign:'center',color:C.textoSec}}, r.n),
+      ...celdasBloque(r),
+      E('td',{style:{padding:'7px 10px',textAlign:'center',color:r.deuda>0?C.warning:C.textoMuted,fontWeight:r.deuda>0?500:400}}, fmtH(r.deuda||0)), celdaExc(r.exc),
+      E('td',{style:{padding:'7px 10px',textAlign:'center',fontWeight:600,color:colPct(pctProg(r))}}, fmtPct(pctProg(r))),
+      E('td',{style:{padding:'7px 10px',textAlign:'center',color:r.deficit>0?C.info:C.textoMuted}}, fmtH(r.deficit||0)),
+      E('td',{style:{padding:'7px 10px',textAlign:'center',fontWeight:600,color:C.danger}}, fmtH(r.dn)),
+      E('td',{style:{padding:'7px 10px',textAlign:'center',fontWeight:600,color:colPct(pct48(r))}}, fmtPct(pct48(r)))
+    );
+  };
+
+  const rows = [];
+  gers.forEach(g => {
+    rows.push(renderFila(g, true, GER_COLOR[g.ger]||C.texto));
+    if (expandida===g.ger) {
+      ordenar(Object.values(g.uos), orden, GET_CAUSAS).forEach(u => rows.push(renderFila(u, false)));
+    }
+  });
+
+  return E(Card, {title:'Causas de deuda por gerencia'},
+    E('div',{className:'tabla-fija fija-1',style:{overflowX:'auto'}},
+      E('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:12}},
+        E('thead',null,
+          E('tr',{style:{background:C.surfaceHigh}},
+            ...cols.map(h=>E('th',{key:h,onClick:()=>clickOrden(h),title:'Ordenar por esta columna',style:{cursor:'pointer',userSelect:'none',padding:'8px 10px',fontWeight:600,color:C.textoMuted,fontSize:10,whiteSpace:'nowrap',borderBottom:BRD,textTransform:'uppercase',textAlign:h==='Gerencia/UO'?'left':'center'}},h,flechaOrden(orden,h)))
+          )
+        ),
+        E('tbody',null, ...rows,
+          E('tr',{style:{background:'#F0FDF4',borderTop:`2px solid ${C.accent}`}},
+            E('td',{style:{padding:'8px 10px',fontWeight:700,color:C.accent}},'TOTAL'),
+            E('td',{style:{padding:'8px 10px',textAlign:'center',fontWeight:700}},total.n),
+            ...celdasBloque(total,'8px 10px',{fontWeight:700}),
+            E('td',{style:{padding:'8px 10px',textAlign:'center',fontWeight:700,color:C.warning}},fmtH(total.deuda)), celdaExc(total.exc,'8px 10px',{fontWeight:700}),
+            E('td',{style:{padding:'8px 10px',textAlign:'center',fontWeight:700,color:colPct(pctProg(total))}},fmtPct(pctProg(total))),
+            E('td',{style:{padding:'8px 10px',textAlign:'center',fontWeight:700,color:C.info}},fmtH(total.deficit)),
+            E('td',{style:{padding:'8px 10px',textAlign:'center',fontWeight:700,color:C.danger}},fmtH(total.dn)),
+            E('td',{style:{padding:'8px 10px',textAlign:'center',fontWeight:700,color:colPct(pct48(total))}},fmtPct(pct48(total)))
+          )
+        )
+      )
+    )
+  );
+}
+
+
+// ─── POR GERENCIA ─────────────────────────────────────────────────────────────
+function PaginaGerencias({
+  datos,
+  onSelectColab
+}) {
+  const [selGer, setSelGer] = useState(null);
+  const [orden, clickOrden] = useOrden("Cumpl.48h", "asc");
+  const {
+    colaboradores
+  } = datos;
+  const gerMap = useMemo(() => {
+    const m = {};
+    colaboradores.forEach(c => {
+      if (!m[c.gerencia]) m[c.gerencia] = {
+        ger: c.gerencia,
+        n: 0,
+        h_deb: 0,
+        h_real: 0,
+        dn: 0,
+        deficit: 0,
+        deuda: 0,
+        ...nuevoBloque(),
+        colab: []
+      };
+      const g = m[c.gerencia];
+      g.n++;
+      g.h_deb += c.h_deb;
+      g.h_real += c.h_real;
+      g.dn += c.deuda_neta;
+      g.deficit += c.deficit_48;
+      g.deuda += c.deuda_op;
+      g.exc = (g.exc || 0) + (c.excedente || 0);
+      sumarBloque(g, c);
+      g.colab.push(c);
+    });
+    return m;
+  }, [colaboradores]);
+  const gerencias = Object.values(gerMap).sort((a, b) => b.dn - a.dn);
+  if (selGer) {
+    const g = gerMap[selGer];
+    const GET_GER = {
+      "Colaborador": c => c.nombre, "Posición": c => c.pos, "UO": c => c.uo, "H.Deb.": c => c.h_deb, "H.Real": c => c.h_real,
+      ...GET_BLOQUE, "Deuda": c => c.deuda_op, "Excedente": c => c.excedente, "Cumpl.Prog.": c => c.cumpl_jornada, "Déf.48h": c => c.deficit_48,
+      "Deuda Neta": c => c.deuda_neta, "Cumpl.48h": c => c.cumpl_48
+    };
+    const colabSorted = ordenar(g.colab, orden, GET_GER);
+    const cumpl = g.h_deb > 0 ? (g.h_real / (g.h_deb + g.deficit) * 100).toFixed(1) : 0;
+    const color = GER_COLOR[selGer] || C.accent;
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 14
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => setSelGer(null),
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "6px 12px",
+        border: BRD,
+        borderRadius: 8,
+        background: C.surface,
+        color: C.textoSec,
+        fontSize: 12,
+        fontWeight: 500,
+        cursor: "pointer",
+        width: "fit-content"
+      }
+    }, "← Volver"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: color,
+        borderRadius: 12,
+        padding: "16px 20px",
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center"
+      }
+    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: "#fff",
+        fontSize: 18,
+        fontWeight: 600
+      }
+    }, selGer), /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: "rgba(255,255,255,0.6)",
+        fontSize: 12
+      }
+    }, g.n, " colaboradores")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 24,
+        textAlign: "right"
+      }
+    }, [["Cumpl.48h", fmtPct(cumpl)], ["H.Deb.", fmtH(g.h_deb)], ["Deuda Neta", fmtH(g.dn)]].map(([l, v]) => /*#__PURE__*/React.createElement("div", {
+      key: l
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: "rgba(255,255,255,0.6)",
+        fontSize: 10
+      }
+    }, l), /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: "#fff",
+        fontSize: 18,
+        fontWeight: 600
+      }
+    }, v))))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "grid",
+        gridTemplateColumns: "repeat(5,1fr)",
+        gap: 8
+      }
+    }, [...BLOQUE.map(b => [b.titulo, fmtH(g[b.kh]), b.color, `${g[b.kd]} días`]), ["Déficit 48h", fmtH(g.deficit), "#1D4ED8"], ["Deuda", fmtH(g.deuda), "#D97706"], ["Excedente", fmtH(g.exc || 0), "#15803D", "no descuenta a otros"], ["Deuda Neta", fmtH(g.dn), "#DC2626"]].map(([l, v, col, sub]) => /*#__PURE__*/React.createElement("div", {
+      key: l,
+      style: {
+        background: C.surface,
+        border: BRD,
+        borderRadius: 10,
+        padding: "12px 14px",
+        textAlign: "center"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        color: C.textoMuted,
+        marginBottom: 4
+      }
+    }, l), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 18,
+        fontWeight: 600,
+        color: col
+      }
+    }, v), sub && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: C.textoMuted,
+        marginTop: 2
+      }
+    }, sub)))), /*#__PURE__*/React.createElement(Card, null, /*#__PURE__*/React.createElement("div", {
+      className: "tabla-fija fija-1",
+      style: {
+        overflowX: "auto"
+      }
+    }, /*#__PURE__*/React.createElement("table", {
+      style: {
+        width: "100%",
+        borderCollapse: "collapse",
+        fontSize: 12
+      }
+    }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
+      style: {
+        background: C.surfaceHigh
+      }
+    }, ["Colaborador", "Posición", "UO", "H.Deb.", "H.Real", ...COLS_BLOQUE, "Deuda", "Excedente", "Cumpl.Prog.", "Déf.48h", "Deuda Neta", "Cumpl.48h", ""].map(h => /*#__PURE__*/React.createElement("th", {
+      key: h,
+      onClick: () => clickOrden(h),
+      title: "Ordenar por esta columna",
+      style: {
+        cursor: "pointer",
+        userSelect: "none",
+        padding: "7px 10px",
+        fontWeight: 600,
+        color: C.textoMuted,
+        fontSize: 10,
+        whiteSpace: "nowrap",
+        borderBottom: BRD,
+        textTransform: "uppercase",
+        textAlign: h === "Colaborador" || h === "UO" || h === "Posición" ? "left" : "center"
+      }
+    }, h, flechaOrden(orden, h))))), /*#__PURE__*/React.createElement("tbody", null, colabSorted.map((c, i) => /*#__PURE__*/React.createElement("tr", {
+      key: c.cod,
+      style: {
+        background: i % 2 === 0 ? C.surface : C.surfaceHigh,
+        borderBottom: `0.5px solid ${C.border}20`
+      }
+    }, /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        whiteSpace: "nowrap",
+        fontWeight: 500
+      }
+    }, c.nombre.split(" ").slice(0, 3).join(" ")), /*#__PURE__*/React.createElement("td", {
+      style: {padding: "7px 10px", color: C.textoSec, fontSize: 10, whiteSpace: "nowrap"}
+    }, c.pos||"—"), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        color: C.textoSec,
+        fontSize: 11
+      }
+    }, c.uo.replace(/Lima.*/, "").trim()), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        textAlign: "center",
+        color: C.textoSec
+      }
+    }, fmtH(c.h_deb)), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        textAlign: "center",
+        color: C.ok
+      }
+    }, fmtH(c.h_real)), ...celdasBloque(c), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        textAlign: "center",
+        color: c.deuda_op > 0 ? C.warning : C.textoMuted,
+        fontWeight: c.deuda_op > 0 ? 600 : 400
+      }
+    }, fmtH(c.deuda_op || 0)), celdaExc(c.excedente), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        textAlign: "center",
+        fontWeight: 600,
+        color: c.cumpl_jornada < 50 ? C.danger : c.cumpl_jornada < 80 ? C.warning : C.ok
+      }
+    }, fmtPct(c.cumpl_jornada)), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        textAlign: "center",
+        color: c.deficit_48 > 0 ? C.info : C.textoMuted
+      }
+    }, fmtH(c.deficit_48 || 0)), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        textAlign: "center",
+        fontWeight: 600,
+        color: C.danger
+      }
+    }, fmtH(c.deuda_neta)), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "7px 10px",
+        textAlign: "center",
+        fontWeight: 600,
+        color: c.cumpl_48 < 80 ? C.danger : C.ok
+      }
+    }, fmtPct(c.cumpl_48)), celdaDetalle(() => onSelectColab && onSelectColab(c)))))))));
+  }
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {style:{display:"flex",justifyContent:"flex-end",marginBottom:8}},
+    /*#__PURE__*/React.createElement("button", {
+      onClick:()=>exportarResumenExcel(colaboradores, `Gerencias_Jornada_${datos.periodo.fin||''}`),
+      style:{padding:"7px 14px",borderRadius:8,border:"none",background:C.accent,color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer"}
+    }, "⬇ Excel")
+  ), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "repeat(2,1fr)",
+      gap: 12
+    }
+  }, gerencias.map(g => {
+    const cumpl = g.h_deb > 0 ? (g.h_real / (g.h_deb + g.deficit) * 100).toFixed(1) : 0;
+    const color = GER_COLOR[g.ger] || C.accent;
+    return /*#__PURE__*/React.createElement("div", {
+      key: g.ger,
+      onClick: () => setSelGer(g.ger),
+      style: {
+        background: C.surface,
+        border: `1.5px solid ${color}`,
+        borderRadius: 12,
+        padding: "16px 18px",
+        cursor: "pointer"
+      },
+      onMouseEnter: e => e.currentTarget.style.boxShadow = `0 4px 12px ${color}30`,
+      onMouseLeave: e => e.currentTarget.style.boxShadow = "none"
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        justifyContent: "space-between",
+        marginBottom: 12
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontWeight: 600,
+        color,
+        fontSize: 13
+      }
+    }, g.ger), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: C.textoMuted
+      }
+    }, g.n, " colab.")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "grid",
+        gridTemplateColumns: "repeat(8,1fr)",
+        gap: 6,
+        marginBottom: 12
+      }
+    }, (() => { const cProg = g.h_deb > 0 ? g.h_real / g.h_deb * 100 : 0; const cCol = v => v < 50 ? C.danger : v < 80 ? C.warning : C.ok; return [["H.Deb.", fmtH(g.h_deb), C.texto], ["H.Trab.", fmtH(g.h_real), C.ok], ["Deuda", fmtH(g.deuda), C.warning], ["Excedente", fmtH(g.exc || 0), "#15803D"], ["Cumpl.Prog.", fmtPct(cProg), cCol(cProg)], ["Déf.48h", fmtH(g.deficit), C.info], ["Deuda Neta", fmtH(g.dn), C.danger], ["Cumpl.48h", fmtPct(cumpl), cCol(parseFloat(cumpl))]]; })().map(([l, v, col]) => /*#__PURE__*/React.createElement("div", {
+      key: l,
+      style: {
+        textAlign: "center"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        color: C.textoMuted
+      }
+    }, l), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 14,
+        whiteSpace: "nowrap",
+        fontWeight: 600,
+        color: col
+      }
+    }, v)))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 10,
+        flexWrap: "wrap"
+      }
+    }, BLOQUE.map(b => /*#__PURE__*/React.createElement("div", {
+      key: b.kd,
+      style: {
+        fontSize: 11
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: C.textoMuted
+      }
+    }, b.d.replace("D.", ""), ": "), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: g[b.kh] > 0 ? b.color : C.textoMuted,
+        fontWeight: 500
+      }
+    }, fmtH(g[b.kh])), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: C.textoMuted
+      }
+    }, ` (${g[b.kd]} d)`)))));
+  })));
+}
+
+// ─── BLOQUE DE COLUMNAS DÍAS/HORAS (igual en todos los módulos) ───────────────
+// H.MC, H.Rem y H.MI = horas trabajadas (H.Real = H.MC + H.Rem + H.MI) · H.S/Marc, H.Tard, H.Tol, H.Ant = horas de deuda
+const BLOQUE = [
+  { d: "D.MC", h: "H.MC", kd: "d_mc", kh: "h_mc", color: "#15803D", titulo: "Marcación completa" },
+  { d: "D.Rem", h: "H.Rem", kd: "d_rem", kh: "h_rem", color: "#0F766E", titulo: "Remoto" },
+  { d: "D.MI", h: "H.MI", kd: "d_mi", kh: "h_mi", color: "#7C3AED", titulo: "Marc. incompleta" },
+  { d: "D.S/Marc", h: "H.S/Marc", kd: "d_smrc", kh: "h_smrc", color: "#DC2626", titulo: "Sin marcación" },
+  { d: "D.Tard", h: "H.Tard", kd: "d_tard", kh: "h_tard", color: "#D97706", titulo: "Tardanzas" },
+  { d: "D.Tol", h: "H.Tol", kd: "d_tol", kh: "h_tol", color: "#854D0E", titulo: "Tard. tolerada" },
+  { d: "D.Ant", h: "H.Ant", kd: "d_antic", kh: "h_antic", color: "#EA580C", titulo: "Sal. anticipadas" }
+];
+const COLS_BLOQUE = BLOQUE.flatMap(b => [b.d, b.h]);
+const GET_BLOQUE = Object.fromEntries(BLOQUE.flatMap(b => [[b.d, r => r[b.kd] || 0], [b.h, r => r[b.kh] || 0]]));
+const nuevoBloque = () => Object.fromEntries(BLOQUE.flatMap(b => [[b.kd, 0], [b.kh, 0]]));
+const sumarBloque = (g, c) => { BLOQUE.forEach(b => { g[b.kd] = (g[b.kd] || 0) + (c[b.kd] || 0); g[b.kh] = (g[b.kh] || 0) + (c[b.kh] || 0); }); };
+function celdasBloque(r, pad, extra) {
+  return BLOQUE.flatMap(b => [
+    React.createElement("td", { key: b.d, style: { padding: pad || "7px 10px", textAlign: "center", color: r[b.kd] > 0 ? b.color : "#C4C4C4", ...(extra || {}) } }, r[b.kd] > 0 ? r[b.kd] : 0),
+    React.createElement("td", { key: b.h, style: { padding: pad || "7px 10px", textAlign: "center", color: r[b.kh] > 0 ? b.color : "#C4C4C4", fontWeight: r[b.kh] > 0 ? 500 : 400, ...(extra || {}) } }, fmtH(r[b.kh] || 0))
+  ]);
+}
+
+// ─── BOTÓN "VER DETALLE" (abre la ficha; la fila ya no es clicable) ───────────
+function celdaDetalle(fn) {
+  return React.createElement("td", { key: "__detalle", style: { padding: "5px 10px", textAlign: "right", whiteSpace: "nowrap" } },
+    React.createElement("button", {
+      onClick: e => { e.stopPropagation(); fn && fn(); },
+      style: { padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.accent}`, background: C.surface, color: C.accent, fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }
+    }, "Ver detalle →"));
+}
+
+function celdaExc(v, pad, extra) {
+  return React.createElement("td", { key: "__exc", style: { padding: pad || "7px 10px", textAlign: "center", color: v > 0 ? "#15803D" : "#C4C4C4", fontWeight: v > 0 ? 600 : 400, ...(extra || {}) } }, fmtH(v || 0));
+}
+
+// ─── ORDEN POR COLUMNA (clic en encabezado) ───────────────────────────────────
+function useOrden(defKey, defDir) {
+  const [orden, setOrden] = useState({ k: defKey, dir: defDir || "desc" });
+  const click = k => setOrden(o => o.k === k ? { k, dir: o.dir === "desc" ? "asc" : "desc" } : { k, dir: "desc" });
+  return [orden, click];
+}
+function ordenar(arr, orden, getters) {
+  const g = getters[orden.k];
+  if (!g) return arr;
+  return [...arr].sort((a, b) => {
+    const va = g(a), vb = g(b);
+    const r = (typeof va === "string" || typeof vb === "string") ? String(va || "").localeCompare(String(vb || "")) : ((va || 0) - (vb || 0));
+    return orden.dir === "asc" ? r : -r;
+  });
+}
+const flechaOrden = (orden, k) => orden.k === k ? (orden.dir === "desc" ? " ▼" : " ▲") : "";
+
+// ─── POR COLABORADOR ──────────────────────────────────────────────────────────
+function PaginaColaboradores({
+  datos,
+  colabInicial
+}) {
+  const [busq, setBusq] = useState("");
+  const [gerFiltro, setGerFiltro] = useState("TODAS");
+  const [sel, setSel] = useState(colabInicial || null);
+  const [tabSel, setTabSel] = useState("resumen");
+  const [imprimiendo, setImprimiendo] = useState(false);
+  const imprimirFicha = () => {
+    setImprimiendo(true);
+    setTimeout(() => {
+      window.print();
+      setImprimiendo(false);
+    }, 300);
+  };
+  const [pagina, setPaginaColab] = useState(1);
+  const POR_PAG = 50;
+  const {
+    colaboradores
+  } = datos;
+  const gerencias = useMemo(() => [...new Set(colaboradores.map(c => c.gerencia))].sort(), [colaboradores]);
+  const [orden, clickOrden] = useOrden("Cumpl.48h", "asc");
+  const GET_COLAB = {
+    "Código": c => c.cod, "Colaborador": c => c.nombre, "Gerencia": c => c.gerencia, "Posición": c => c.pos, "UO": c => c.uo,
+    "H.Deb.": c => c.h_deb, "H.Real": c => c.h_real, ...GET_BLOQUE,
+    "Deuda": c => c.deuda_op, "Excedente": c => c.excedente, "Cumpl.Prog.": c => c.cumpl_jornada, "Déf.48h": c => c.deficit_48, "Deuda Neta": c => c.deuda_neta, "Cumpl.48h": c => c.cumpl_48,
+    "Causa Deuda": c => (getCausaDeuda(c) || {}).label || "", "Causa DN": c => (getCausaDN(c) || {}).label || ""
+  };
+  const filtrados = useMemo(() => {
+    let r = colaboradores;
+    if (gerFiltro !== "TODAS") r = r.filter(c => c.gerencia === gerFiltro);
+    if (busq.trim()) r = r.filter(c => c.nombre.toLowerCase().includes(busq.toLowerCase()) || String(c.cod).includes(busq));
+    return ordenar(r, orden, GET_COLAB);
+  }, [busq, gerFiltro, colaboradores, orden]);
+  useEffect(() => { setPaginaColab(1); }, [busq, gerFiltro, orden]);
+  if (sel) {
+    // Siempre mostrar la versión recalculada (fecha de corte / tolerancia vigentes)
+    const c = colaboradores.find(x => x.cod === sel.cod) || sel;
+    const causas = [{
+      label: "Sin marcación",
+      h: c.h_smrc,
+      dias: c.d_smrc,
+      color: "#DC2626",
+      bg: "#FEE2E2"
+    }, {
+      label: "Tardanzas",
+      h: c.h_tard,
+      dias: c.d_tard,
+      color: "#D97706",
+      bg: "#FEF3C7"
+    }, {
+      label: "Sal. anticipadas",
+      h: c.h_antic,
+      dias: c.d_antic,
+      color: "#EA580C",
+      bg: "#FED7AA"
+    }, {
+      label: "Tard. tolerada",
+      h: c.h_tol || 0,
+      dias: c.d_tol || 0,
+      color: "#854D0E",
+      bg: "#FEF9C3"
+    }, {
+      label: "Déficit 48h",
+      h: c.deficit_48,
+      dias: "—",
+      color: "#1D4ED8",
+      bg: "#DBEAFE"
+    }].filter(x => x.h > 0).sort((a, b) => b.h - a.h);
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 14
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "no-print",
+      style: { display: "flex", gap: 8, alignItems: "center" }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => {
+        setSel(null);
+        setTabSel("resumen");
+      },
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "6px 12px",
+        border: BRD,
+        borderRadius: 8,
+        background: C.surface,
+        color: C.textoSec,
+        fontSize: 12,
+        fontWeight: 500,
+        cursor: "pointer",
+        width: "fit-content"
+      }
+    }, "← Volver"), /*#__PURE__*/React.createElement("button", {
+      onClick: () => exportarFichaExcel(c, datos.periodo),
+      title: "Descarga la ficha en Excel: hoja Resumen y hoja Tareo diario",
+      style: { padding: "6px 12px", border: "none", borderRadius: 8, background: C.accent, color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer" }
+    }, "⬇ Excel")), imprimiendo && /*#__PURE__*/React.createElement("div", {
+      style: { fontSize: 11, color: C.textoMuted }
+    }, `Ficha de jornada · Período ${fmtFecha(datos.periodo.inicio)} → ${fmtFecha(datos.periodo.fin)} · NidoGestor Jornada — La Calera S.A.C.`), /*#__PURE__*/React.createElement(Card, null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: "16px 18px",
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "flex-start"
+      }
+    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 17,
+        fontWeight: 600,
+        color: C.texto
+      }
+    }, c.nombre), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: C.textoSec,
+        marginTop: 2
+      }
+    }, c.pos), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: GER_COLOR[c.gerencia] || C.accent,
+        marginTop: 2,
+        fontWeight: 500
+      }
+    }, c.gerencia, " · ", c.uo), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: C.textoMuted,
+        marginTop: 2
+      }
+    }, "Código: ", c.cod), c.fe_ingreso && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: C.textoMuted,
+        marginTop: 1
+      }
+    }, "Ingreso: ", fmtFecha(c.fe_ingreso), c.fe_cese ? ` · Cese: ${fmtFecha(c.fe_cese)}` : "")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: C.textoMuted
+      }
+    }, "Cumpl. 48h"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 32,
+        fontWeight: 700,
+        color: c.cumpl_48 < 80 ? C.danger : C.ok,
+        letterSpacing: "-0.02em"
+      }
+    }, fmtPct(c.cumpl_48))))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "grid",
+        gridTemplateColumns: "repeat(5,1fr)",
+        gap: 10
+      }
+    }, /*#__PURE__*/React.createElement(KpiCard, {
+      label: "H. Debidas",
+      value: fmtH(c.h_deb),
+      color: C.texto
+    }), /*#__PURE__*/React.createElement(KpiCard, {
+      label: "H. Reales",
+      value: fmtH(c.h_real),
+      color: C.ok
+    }), /*#__PURE__*/React.createElement(KpiCard, {
+      label: "Deuda",
+      value: fmtH(c.deuda_op),
+      color: C.warning
+    }), /*#__PURE__*/React.createElement(KpiCard, {
+      label: "Déficit 48h",
+      value: fmtH(c.deficit_48),
+      color: C.info
+    }), /*#__PURE__*/React.createElement(KpiCard, {
+      label: "Deuda Neta",
+      value: fmtH(c.deuda_neta),
+      color: C.danger
+    })), /*#__PURE__*/React.createElement("div", {
+      className: "no-print",
+      style: {
+        display: "flex",
+        gap: 0,
+        borderBottom: BRD,
+        background: C.surface,
+        borderRadius: "12px 12px 0 0",
+        overflow: "hidden"
+      }
+    }, [["resumen", "Resumen"], ["tareo", "Tareo diario"]].map(([id, label]) => /*#__PURE__*/React.createElement("button", {
+      key: id,
+      onClick: () => setTabSel(id),
+      style: {
+        padding: "10px 18px",
+        fontSize: 13,
+        background: "none",
+        border: "none",
+        borderBottom: tabSel === id ? `2px solid ${C.accent}` : "2px solid transparent",
+        color: tabSel === id ? C.accent : C.textoSec,
+        fontWeight: tabSel === id ? 600 : 400,
+        cursor: "pointer"
+      }
+    }, label))), (tabSel === "resumen" || imprimiendo) && /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gap: 12
+      }
+    }, /*#__PURE__*/React.createElement(Card, {
+      title: "Causas de deuda"
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: "14px 16px"
+      }
+    }, causas.length === 0 ? /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: C.ok,
+        fontSize: 13,
+        fontWeight: 500
+      }
+    }, "✓ Sin deuda en el período") : causas.map(ca => /*#__PURE__*/React.createElement("div", {
+      key: ca.label,
+      style: {
+        marginBottom: 14
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        justifyContent: "space-between",
+        marginBottom: 4
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 13
+      }
+    }, ca.label), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 12,
+        fontWeight: 600,
+        color: ca.color
+      }
+    }, fmtH(ca.h), ca.dias !== "—" ? ` · ${ca.dias} días` : " · estructural")), /*#__PURE__*/React.createElement(Barra, {
+      val: ca.h,
+      max: c.deuda_neta,
+      color: ca.color,
+      height: 7
+    }))))), /*#__PURE__*/React.createElement(Card, {
+      title: "Resumen del período"
+    }, /*#__PURE__*/React.createElement(ResumenIndividual, {
+      c: c
+    }))), (tabSel === "tareo" || imprimiendo) && /*#__PURE__*/React.createElement(Card, {
+      title: `Tareo diario — ${c.tareo.length} días`
+    }, /*#__PURE__*/React.createElement(TareoTabla, {
+      tareo: c.tareo
+    })));
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    value: busq,
+    onChange: e => setBusq(e.target.value),
+    placeholder: "Buscar por nombre o código...",
+    style: {
+      flex: 1,
+      padding: "8px 12px",
+      border: BRD,
+      borderRadius: 8,
+      fontSize: 13,
+      background: C.surface
+    }
+  }), /*#__PURE__*/React.createElement("select", {
+    value: gerFiltro,
+    onChange: e => setGerFiltro(e.target.value),
+    style: {
+      padding: "8px 12px",
+      border: BRD,
+      borderRadius: 8,
+      fontSize: 13,
+      background: C.surface
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "TODAS"
+  }, "Todas las gerencias"), gerencias.map(g => /*#__PURE__*/React.createElement("option", {
+    key: g,
+    value: g
+  }, g)))), /*#__PURE__*/React.createElement("div", {
+    style: {display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}
+  },
+    /*#__PURE__*/React.createElement("div", {style:{fontSize:12,color:C.textoMuted}},
+      `${filtrados.length} colaboradores`
+    ),
+    /*#__PURE__*/React.createElement("div", {style:{display:"flex",gap:8,alignItems:"center"}},
+      filtrados.length > POR_PAG && /*#__PURE__*/React.createElement("div", {style:{display:"flex",gap:4,alignItems:"center"}},
+        /*#__PURE__*/React.createElement("button", {
+          onClick:()=>setPaginaColab(p=>Math.max(1,p-1)),
+          disabled:pagina===1,
+          style:{padding:"4px 10px",borderRadius:6,border:BRD,background:C.surface,cursor:pagina===1?"not-allowed":"pointer",fontSize:12}
+        }, "‹"),
+        /*#__PURE__*/React.createElement("span", {style:{fontSize:12,color:C.textoSec}},
+          `${pagina} / ${Math.ceil(filtrados.length/POR_PAG)}`
+        ),
+        /*#__PURE__*/React.createElement("button", {
+          onClick:()=>setPaginaColab(p=>Math.min(Math.ceil(filtrados.length/POR_PAG),p+1)),
+          disabled:pagina>=Math.ceil(filtrados.length/POR_PAG),
+          style:{padding:"4px 10px",borderRadius:6,border:BRD,background:C.surface,cursor:pagina>=Math.ceil(filtrados.length/POR_PAG)?"not-allowed":"pointer",fontSize:12}
+        }, "›")
+      ),
+      /*#__PURE__*/React.createElement("button", {
+        onClick:()=>exportarResumenExcel(filtrados, `Colaboradores_Jornada_${datos.periodo.fin||''}`),
+        style:{padding:"6px 14px",borderRadius:8,border:"none",background:C.accent,color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer"}
+      }, "⬇ Excel")
+    )
+  ), /*#__PURE__*/React.createElement(Card, null, /*#__PURE__*/React.createElement("div", {
+    className: "tabla-fija fija-2",
+    style: {
+      overflowX: "auto"
+    }
+  }, /*#__PURE__*/React.createElement("table", {
+    style: {
+      width: "100%",
+      borderCollapse: "collapse",
+      fontSize: 12
+    }
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
+    style: {
+      background: C.surfaceHigh
+    }
+  }, ["Código", "Colaborador", "Gerencia", "Posición", "UO", "H.Deb.", "H.Real", ...COLS_BLOQUE, "Deuda", "Excedente", "Cumpl.Prog.", "Déf.48h", "Deuda Neta", "Cumpl.48h", "Causa Deuda", "Causa DN", ""].map(h => /*#__PURE__*/React.createElement("th", {
+    key: h,
+    onClick: () => clickOrden(h),
+    title: "Ordenar por esta columna",
+    style: {
+      cursor: "pointer",
+      userSelect: "none",
+      padding: "8px 10px",
+      fontWeight: 600,
+      color: C.textoMuted,
+      fontSize: 10,
+      whiteSpace: "nowrap",
+      borderBottom: BRD,
+      textTransform: "uppercase",
+      textAlign: ["H.Deb.", "H.Real", ...COLS_BLOQUE, "Deuda", "Excedente", "Cumpl.Prog.", "Déf.48h", "Deuda Neta", "Cumpl.48h"].includes(h) ? "center" : "left"
+    }
+  }, h, flechaOrden(orden, h))))), /*#__PURE__*/React.createElement("tbody", null, filtrados.slice((pagina-1)*POR_PAG, pagina*POR_PAG).map((c, i) => /*#__PURE__*/React.createElement("tr", {
+    key: c.cod,
+    style: {
+      background: i % 2 === 0 ? C.surface : C.surfaceHigh,
+      borderBottom: `0.5px solid ${C.border}20`
+    },
+    onMouseEnter: e => e.currentTarget.style.background = "#F0FDF4",
+    onMouseLeave: e => e.currentTarget.style.background = i % 2 === 0 ? C.surface : C.surfaceHigh
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "9px 10px",
+      color: C.textoMuted
+    }
+  }, c.cod), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "9px 10px",
+      fontWeight: 500,
+      whiteSpace: "nowrap"
+    }
+  }, c.nombre.split(" ").slice(0, 3).join(" ")), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "9px 10px",
+      color: GER_COLOR[c.gerencia] || C.textoSec,
+      fontWeight: 500,
+      fontSize: 11
+    }
+  }, c.gerencia), /*#__PURE__*/React.createElement("td", {
+    style: {padding: "9px 10px", color: C.textoSec, fontSize: 10, whiteSpace: "nowrap"}
+  }, c.pos||"—"), /*#__PURE__*/React.createElement("td", {
+    style: {padding: "9px 10px", color: C.textoSec, fontSize: 10}
+  }, c.uo||"—"), /*#__PURE__*/React.createElement("td", {
+    style: {padding:"9px 10px",textAlign:"center",color:C.textoSec}
+  }, fmtH(c.h_deb)), /*#__PURE__*/React.createElement("td", {
+    style: {padding:"9px 10px",textAlign:"center",color:C.ok}
+  }, fmtH(c.h_real)), ...celdasBloque(c, "9px 10px"), /*#__PURE__*/React.createElement("td", {
+    style: {padding:"9px 10px",textAlign:"center",color:c.deuda_op>0?C.warning:C.textoMuted}
+  }, fmtH(c.deuda_op||0)), celdaExc(c.excedente), /*#__PURE__*/React.createElement("td", {
+    style: {padding:"9px 10px",textAlign:"center",fontWeight:600,color:c.h_deb>0?(c.h_real/c.h_deb*100)>=80?C.ok:C.warning:C.textoMuted}
+  }, c.h_deb>0?fmtPct(c.h_real/c.h_deb*100):"—"), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "9px 10px",
+      textAlign: "center",
+      color: c.deficit_48 > 0 ? C.info : C.textoMuted
+    }
+  }, fmtH(c.deficit_48 || 0)), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "9px 10px",
+      textAlign: "center",
+      fontWeight: 600,
+      color: C.danger
+    }
+  }, fmtH(c.deuda_neta)), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: "9px 10px",
+      textAlign: "center",
+      fontWeight: 600,
+      color: c.cumpl_48 < 80 ? C.danger : C.ok
+    }
+  }, fmtPct(c.cumpl_48)), /*#__PURE__*/React.createElement("td", {
+    style: {padding:"9px 10px"}
+  }, /*#__PURE__*/React.createElement(CausaDeudaBadge, {c})), /*#__PURE__*/React.createElement("td", {
+    style: {padding:"9px 10px"}
+  }, /*#__PURE__*/React.createElement(CausaDNBadge, {c})), celdaDetalle(() => setSel(c)))))), filtrados.length > POR_PAG && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "8px 12px",
+      fontSize: 11,
+      color: C.textoMuted,
+      textAlign: "center"
+    }
+  }, `Mostrando ${(pagina - 1) * POR_PAG + 1}–${Math.min(pagina * POR_PAG, filtrados.length)} de ${filtrados.length} colaboradores`))));
+}
+
+
+// ─── MÓDULO KRONOS ────────────────────────────────────────────────────────────
+function PaginaKronos({datos}) {
+  const [busq, setBusq] = React.useState('');
+  const [gerFiltro, setGerFiltro] = React.useState('TODAS');
+  const [estFiltro, setEstFiltro] = React.useState('TODOS');
+  const [desde, setDesde] = React.useState('');
+  const [hasta, setHasta] = React.useState('');
+  const {colaboradores} = datos;
+  const gerencias = React.useMemo(()=>[...new Set(colaboradores.map(c=>c.gerencia))].sort(),[colaboradores]);
+  const FILTROS_ESTADO = [
+    ['TODOS','Todos los estados'],
+    ['DEUDA','Con deuda'],
+    ['SIN_MARC','Sin marcación'],
+    ['MARC_INC','Marc. incompleta'],
+    ['TARD','Con tardanza'],
+    ['TOL','Con tardanza tolerada'],
+    ['ANTIC','Con salida anticipada'],
+    ['OK','Marc. completa sin deuda'],
+    ['REMOTO','Remoto'],
+    ['ABSENTISMO','Absentismo'],
+    ['FERIADO','Feriado'],
+    ['TRAB_LIBRE','Descanso/Feriado trabajado']
+  ];
+  const pasaDia = d => {
+    if (d.estado === 'DESCANSO') return false;
+    if (desde && d.fecha < desde) return false;
+    if (hasta && d.fecha > hasta) return false;
+    switch (estFiltro) {
+      case 'DEUDA': return d.deuda_min > 0;
+      case 'SIN_MARC': return d.estado === 'SIN_MARC';
+      case 'MARC_INC': return d.estado === 'MARC_INC';
+      case 'TARD': return d.tard_min > 0;
+      case 'TOL': return d.tol_min > 0;
+      case 'ANTIC': return d.antic_min > 0;
+      case 'OK': return ['OK','TARDANZA','ANTICIPADA','TARD_ANTIC','TARD_TOL'].includes(d.estado) && !(d.deuda_min > 0);
+      case 'REMOTO': return d.estado === 'REMOTO';
+      case 'ABSENTISMO': return d.estado === 'ABSENTISMO';
+      case 'FERIADO': return d.estado === 'FERIADO';
+      case 'TRAB_LIBRE': return d.estado === 'DESC_TRAB' || d.estado === 'FER_TRAB';
+      default: return true;
+    }
+  };
+  const colabFiltrados = React.useMemo(()=>{
+    let r = colaboradores;
+    if (gerFiltro !== 'TODAS') r = r.filter(c=>c.gerencia===gerFiltro);
+    if (busq.trim()) r = r.filter(c=>c.nombre.toLowerCase().includes(busq.toLowerCase())||String(c.cod).includes(busq));
+    return [...r].sort((a,b)=>a.nombre.localeCompare(b.nombre));
+  },[busq,gerFiltro,colaboradores]);
+  // Colaboradores con su tareo ya filtrado (lo mismo que se exporta)
+  const colabConDias = React.useMemo(()=>colabFiltrados.map(c=>({...c, tareo:c.tareo.filter(pasaDia)})).filter(c=>c.tareo.length>0),[colabFiltrados,estFiltro,desde,hasta]);
+  const totalFilas = colabConDias.reduce((s,c)=>s+c.tareo.length,0);
+  const COLS = ['Código','Colaborador','Gerencia','Fecha','Día','Tipo','Horario','H.Prog.','Refrig.','H.Deb.','Ingreso','Salida','H.Trab.','Tardanza','Tard.Tol.','Sal.Ant.','Excedente','Deuda','Estado'];
+  const E = React.createElement;
+  const selStyle = {padding:'8px 12px',border:BRD,borderRadius:8,fontSize:13,background:C.surface};
+
+  const rows = [];
+  colabConDias.forEach((c,ci)=>{
+    c.tareo.forEach((d)=>{
+      const est = ESTADO_STYLE[d.estado]||ESTADO_STYLE.OK;
+      const rowBg = ci%2===0?C.surface:C.surfaceHigh;
+      rows.push(E('tr',{key:`${c.cod}-${d.fecha}`,style:{background:rowBg,borderBottom:`0.5px solid ${C.border}20`}},
+        E('td',{style:{padding:'5px 8px',color:C.textoMuted,fontSize:11}}, c.cod),
+        E('td',{style:{padding:'5px 8px',fontWeight:500,color:C.texto,whiteSpace:'nowrap',fontSize:11}}, c.nombre.split(' ').slice(0,3).join(' ')),
+        E('td',{style:{padding:'5px 8px',color:GER_COLOR[c.gerencia]||C.textoSec,fontWeight:500,fontSize:10,whiteSpace:'nowrap'}}, c.gerencia),
+        E('td',{style:{padding:'5px 8px',fontWeight:500,whiteSpace:'nowrap',fontSize:11}}, fmtFechaCorta(d.fecha)),
+        E('td',{style:{padding:'5px 8px',color:C.textoSec,fontSize:11}}, d.diaSem),
+        E('td',{style:{padding:'5px 8px'}},
+          d.tipo==='REMOTO'||d.estado==='REMOTO'
+            ? E('span',{style:{background:'#D1FAE5',color:'#065F46',fontSize:9,padding:'1px 5px',borderRadius:3}},'Remoto')
+            : d.tipo==='PRESENCIAL'
+            ? E('span',{style:{background:'#DBEAFE',color:'#1E40AF',fontSize:9,padding:'1px 5px',borderRadius:3}},'Presencial')
+            : E('span',{style:{fontSize:9,color:C.textoMuted}},'—')
+        ),
+        E('td',{style:{padding:'5px 8px',color:C.textoSec,fontSize:10,whiteSpace:'nowrap'}}, d.horProg||'—'),
+        E('td',{style:{padding:'5px 8px',color:C.textoSec,fontSize:11}}, d.hProg||'—'),
+        E('td',{style:{padding:'5px 8px',color:'#7C3AED',fontSize:11}}, d.refrig||'—'),
+        E('td',{style:{padding:'5px 8px',fontWeight:500,fontSize:11}}, d.hDeb||'—'),
+        E('td',{style:{padding:'5px 8px',color:d.ingAutomatic?C.danger:C.texto,fontWeight:d.ingAutomatic?600:400,fontSize:11}}, d.ing!=null&&d.estado!=='FERIADO'&&d.estado!=='ABSENTISMO'?minToHHMM(d.ing):'—'),
+        E('td',{style:{padding:'5px 8px',color:d.salAutomatic?C.danger:C.texto,fontWeight:d.salAutomatic?600:400,fontSize:11}}, d.sal!=null&&d.estado!=='FERIADO'&&d.estado!=='ABSENTISMO'?minToHHMM(d.sal):'—'),
+        E('td',{style:{padding:'5px 8px',textAlign:'center',color:d.trab_min>0?C.ok:C.textoMuted,fontSize:11}}, minDia(d,'trab_min')),
+        E('td',{style:{padding:'5px 8px',textAlign:'center',color:d.tard_min>0?C.warning:C.textoMuted,fontWeight:d.tard_min>0?500:400,fontSize:11}}, minDia(d,'tard_min')),
+        E('td',{style:{padding:'5px 8px',textAlign:'center',color:d.tol_min>0?'#854D0E':C.textoMuted,fontWeight:d.tol_min>0?500:400,fontSize:11}}, minDia(d,'tol_min')),
+        E('td',{style:{padding:'5px 8px',textAlign:'center',color:d.antic_min>0?'#EA580C':C.textoMuted,fontSize:11}}, minDia(d,'antic_min')),
+        E('td',{style:{padding:'5px 8px',textAlign:'center',color:d.excedente_min>0?C.ok:C.textoMuted,fontSize:11}}, minDia(d,'excedente_min')),
+        E('td',{style:{padding:'5px 8px',textAlign:'center',fontWeight:d.deuda_min>0?600:400,color:d.deuda_min>0?C.danger:C.textoMuted,fontSize:11}}, minDia(d,'deuda_min')),
+        E('td',{style:{padding:'5px 8px'}},
+          E('span',{style:{background:est.bg,color:est.color,fontSize:9,padding:'1px 6px',borderRadius:3,fontWeight:500,whiteSpace:'nowrap'}},
+            d.estado==='ABSENTISMO'?(d.obs||'Absentismo'):d.absInj?'Falta injustificada':est.label
+          )
+        )
+      ));
+    });
+  });
+
+  return E('div',{style:{display:'flex',flexDirection:'column',gap:12}},
+    E('div',{style:{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}},
+      E('input',{value:busq,onChange:e=>setBusq(e.target.value),placeholder:'Buscar colaborador...',
+        style:{flex:1,minWidth:200,padding:'8px 12px',border:BRD,borderRadius:8,fontSize:13,background:C.surface}}),
+      E('select',{value:gerFiltro,onChange:e=>setGerFiltro(e.target.value),style:selStyle},
+        E('option',{value:'TODAS'},'Todas las gerencias'),
+        ...gerencias.map(g=>E('option',{key:g,value:g},g))
+      ),
+      E('select',{value:estFiltro,onChange:e=>setEstFiltro(e.target.value),style:selStyle},
+        ...FILTROS_ESTADO.map(([v,l])=>E('option',{key:v,value:v},l))
+      ),
+      E('label',{style:{fontSize:12,color:C.textoSec,display:'flex',alignItems:'center',gap:6}},'Desde',
+        E('input',{type:'date',value:desde,min:datos.periodo.inicio,max:datos.periodo.fin,onChange:e=>setDesde(e.target.value),style:{...selStyle,padding:'6px 8px'}})),
+      E('label',{style:{fontSize:12,color:C.textoSec,display:'flex',alignItems:'center',gap:6}},'Hasta',
+        E('input',{type:'date',value:hasta,min:datos.periodo.inicio,max:datos.periodo.fin,onChange:e=>setHasta(e.target.value),style:{...selStyle,padding:'6px 8px'}})),
+      (estFiltro!=='TODOS'||desde||hasta) && E('button',{onClick:()=>{setEstFiltro('TODOS');setDesde('');setHasta('');},
+        style:{padding:'8px 12px',borderRadius:8,border:BRD,background:C.surface,color:C.textoSec,fontSize:12,cursor:'pointer'}},'Limpiar filtros'),
+      E('button',{
+        onClick:()=>exportarExcel(colabConDias,`Kronos_Jornada_${datos.periodo.fin||''}`),
+        style:{padding:'8px 16px',borderRadius:8,border:'none',background:C.accent,color:'#fff',fontSize:12,fontWeight:600,cursor:'pointer'}
+      },'⬇ Excel Kronos'),
+      E('button',{
+        onClick:()=>exportarResumenExcel(colabFiltrados,`Resumen_Jornada_${datos.periodo.fin||''}`),
+        style:{padding:'8px 16px',borderRadius:8,border:'none',background:'#1D4ED8',color:'#fff',fontSize:12,fontWeight:600,cursor:'pointer'}
+      },'⬇ Excel Resumen')
+    ),
+    E('div',{style:{fontSize:12,color:C.textoMuted}},`${colabConDias.length} colaboradores · ${totalFilas.toLocaleString()} registros${estFiltro!=='TODOS'||desde||hasta?' (filtrado — el Excel Kronos exporta lo filtrado)':''}`),
+    E('div',{style:{background:C.surface,border:BRD,borderRadius:12,overflow:'hidden',boxShadow:'0 1px 3px rgba(0,0,0,0.04)'}},
+      E('div',{style:{maxHeight:'calc(100vh - 150px)',overflow:'auto'}},
+        E('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:11}},
+          E('thead',{style:{position:'sticky',top:0,zIndex:10}},
+            E('tr',{style:{background:'#1A5C2E'}},
+              ...COLS.map(h=>E('th',{key:h,style:{background:'#1A5C2E',position:'sticky',top:0,zIndex:10,padding:'7px 8px',fontWeight:600,color:'rgba(255,255,255,0.9)',fontSize:10,whiteSpace:'nowrap',textTransform:'uppercase',letterSpacing:'0.04em',textAlign:'left',borderBottom:'1px solid #14472A'}},h))
+            )
+          ),
+          E('tbody',{},rows)
+        )
+      )
+    )
+  );
+}
+
+
+
+// ─── INCIDENCIAS DE MARCA (sin marcación, marc. incompleta, remoto automático) ─
+// Solo lectura del tareo ya calculado: no modifica ningún cálculo
+const TIPOS_INC = [
+  { k: "SIN_MARC", label: "Sin marcación", color: "#DC2626", bg: "#FEE2E2" },
+  { k: "MARC_INC", label: "Marc. incompleta", color: "#7C3AED", bg: "#EDE9FE" },
+  { k: "REMOTO", label: "Remoto automático", color: "#0F766E", bg: "#CCFBF1" }
+];
+function filasIncidencias(colaboradores) {
+  const filas = [];
+  colaboradores.forEach(c => c.tareo.forEach(d => {
+    if (!["SIN_MARC", "MARC_INC", "REMOTO"].includes(d.estado)) return;
+    const jMin = hhmmAMin(d.hDeb) || 0;
+    const falta = d.estado === "MARC_INC" ? (d.ingAutomatic ? "Ingreso" : d.salAutomatic ? "Salida" : "—") : "";
+    filas.push({ c, d, tipo: d.estado, falta, hdeb: jMin, deuda: d.estado === "REMOTO" ? 0 : (d.deuda_min || 0), trab: d.estado === "REMOTO" ? jMin : (d.trab_min || 0) });
+  }));
+  return filas;
+}
+function exportarIncidenciasExcel(porTipo, resumen, nombreArchivo) {
+  const wb = XLSX.utils.book_new();
+  const base = f => [f.c.cod, f.c.nombre, f.c.gerencia, f.c.uo, f.c.pos, xFecha(f.d.fecha), f.d.diaSem, f.d.horProg || ""];
+  const cab = ["Cód.Trab", "Nombres", "Gerencia", "UO", "Posición", "Fecha", "Día", "Horario"];
+  const s1 = [[...cab, "H.Deb.", "Deuda", "Observación"], ...porTipo.SIN_MARC.map(f => [...base(f), xMin(f.hdeb), xMin(f.deuda), f.d.absInj ? `Falta injustificada (${f.d.absInj})` : ""])];
+  XLSX.utils.book_append_sheet(wb, hojaExcel(s1, [8, 30, 22, 22, 28, 11, 5, 13, 8, 8, 34]), "Sin marcación");
+  const s2 = [[...cab, "Marca faltante", "Ingreso", "Salida", "H.Deb.", "H.Trab.", "Tardanza", "Sal.Ant.", "Deuda", "Observación"], ...porTipo.MARC_INC.map(f => [...base(f), f.falta, xHora(f.d.ing), xHora(f.d.sal), xMin(f.hdeb), xMin(f.trab), xMin(f.d.tard_min), xMin(f.d.antic_min), xMin(f.deuda), `Marca de ${f.falta.toLowerCase()} completada con su horario`])];
+  XLSX.utils.book_append_sheet(wb, hojaExcel(s2, [8, 30, 22, 22, 28, 11, 5, 13, 12, 8, 8, 8, 8, 8, 8, 8, 32]), "Marc. incompleta");
+  const s3 = [[...cab, "Horas completadas"], ...porTipo.REMOTO.map(f => [...base(f), xMin(f.trab)])];
+  XLSX.utils.book_append_sheet(wb, hojaExcel(s3, [8, 30, 22, 22, 28, 11, 5, 13, 12]), "Remoto automático");
+  const s4 = [["Cód.Trab", "Nombres", "Gerencia", "UO", "D.S/Marc", "H.S/Marc", "D.MI", "H.MI", "MI sin ingreso", "MI sin salida", "D.Rem.auto", "H.Rem.auto"],
+    ...resumen.map(r => [r.c.cod, r.c.nombre, r.c.gerencia, r.c.uo, r.SIN_MARC.d, xMin(r.SIN_MARC.m), r.MARC_INC.d, xMin(r.MARC_INC.m), r.miIng, r.miSal, r.REMOTO.d, xMin(r.REMOTO.m)])];
+  XLSX.utils.book_append_sheet(wb, hojaExcel(s4, [8, 30, 22, 22, 9, 9, 7, 8, 12, 11, 10, 10]), "Por colaborador");
+  XLSX.writeFile(wb, nombreArchivo + ".xlsx");
+}
+function PaginaIncidencias({ datos, onSelectColab }) {
+  const E = React.createElement;
+  const { colaboradores } = datos;
+  const [busq, setBusq] = useState("");
+  const [gerFiltro, setGerFiltro] = useState("TODAS");
+  const [desde, setDesde] = useState("");
+  const [hasta, setHasta] = useState("");
+  const [tab, setTab] = useState("SIN_MARC");
+  const [ordenD, clickOrdenD] = useOrden("Fecha", "asc");
+  const [ordenC, clickOrdenC] = useOrden("H.S/Marc", "desc");
+  const gerencias = useMemo(() => [...new Set(colaboradores.map(c => c.gerencia))].sort(), [colaboradores]);
+  const todas = useMemo(() => filasIncidencias(colaboradores), [colaboradores]);
+  const filas = todas.filter(f =>
+    (gerFiltro === "TODAS" || f.c.gerencia === gerFiltro) &&
+    (!desde || f.d.fecha >= desde) && (!hasta || f.d.fecha <= hasta) &&
+    (!busq.trim() || f.c.nombre.toLowerCase().includes(busq.toLowerCase()) || String(f.c.cod).includes(busq))
+  );
+  const porTipo = { SIN_MARC: [], MARC_INC: [], REMOTO: [] };
+  filas.forEach(f => porTipo[f.tipo].push(f));
+  const resMap = {};
+  filas.forEach(f => {
+    if (!resMap[f.c.cod]) resMap[f.c.cod] = { c: f.c, SIN_MARC: { d: 0, m: 0 }, MARC_INC: { d: 0, m: 0 }, REMOTO: { d: 0, m: 0 }, miIng: 0, miSal: 0 };
+    const r = resMap[f.c.cod];
+    r[f.tipo].d++;
+    r[f.tipo].m += f.tipo === "SIN_MARC" ? f.deuda : f.trab;
+    if (f.falta === "Ingreso") r.miIng++;
+    if (f.falta === "Salida") r.miSal++;
+  });
+  const GET_D = { "Código": f => f.c.cod, "Colaborador": f => f.c.nombre, "Gerencia": f => f.c.gerencia, "UO": f => f.c.uo, "Fecha": f => f.d.fecha, "Día": f => f.d.diaSem, "Horario": f => f.d.horProg || "", "H.Deb.": f => f.hdeb, "Deuda": f => f.deuda, "Observación": f => f.d.absInj || "", "Marca faltante": f => f.falta, "Ingreso": f => f.d.ing ?? -1, "Salida": f => f.d.sal ?? -1, "H.Trab.": f => f.trab, "Tardanza": f => f.d.tard_min || 0, "Sal.Ant.": f => f.d.antic_min || 0, "Horas completadas": f => f.trab };
+  const GET_C = { "Código": r => r.c.cod, "Colaborador": r => r.c.nombre, "Gerencia": r => r.c.gerencia, "UO": r => r.c.uo, "D.S/Marc": r => r.SIN_MARC.d, "H.S/Marc": r => r.SIN_MARC.m, "D.MI": r => r.MARC_INC.d, "H.MI": r => r.MARC_INC.m, "MI sin ingreso": r => r.miIng, "MI sin salida": r => r.miSal, "D.Rem.auto": r => r.REMOTO.d, "H.Rem.auto": r => r.REMOTO.m };
+  const resumen = ordenar(Object.values(resMap), ordenC, GET_C);
+  const ordTipo = k => ordenar(porTipo[k], ordenD, GET_D);
+  const selStyle = { padding: "8px 12px", border: BRD, borderRadius: 8, fontSize: 13, background: C.surface };
+  const th = (h, orden, click, centro) => E("th", { key: h, onClick: () => click(h), title: "Ordenar por esta columna", style: { cursor: "pointer", userSelect: "none", padding: "8px 10px", fontWeight: 600, color: C.textoMuted, fontSize: 10, whiteSpace: "nowrap", borderBottom: BRD, textTransform: "uppercase", textAlign: centro ? "center" : "left", background: C.surfaceHigh, position: "sticky", top: 0, zIndex: 2 } }, h, flechaOrden(orden, h));
+  const td = (v, st) => E("td", { style: { padding: "7px 10px", fontSize: 12, ...(st || {}) } }, v);
+  const gris = "#C4C4C4";
+  const hm = (m, col) => td(m > 0 ? fmtMin(m) : "00:00", { textAlign: "center", color: m > 0 ? col : gris, fontWeight: m > 0 ? 500 : 400 });
+  const nd = (n, col) => td(n || 0, { textAlign: "center", color: n > 0 ? col : gris });
+  const comunes = f => [
+    td(f.c.cod, { color: C.textoMuted }),
+    td(f.c.nombre, { fontWeight: 500, whiteSpace: "nowrap" }),
+    td(f.c.gerencia, { color: GER_COLOR[f.c.gerencia] || C.textoSec, fontSize: 11, fontWeight: 500 }),
+    td(f.c.uo || "—", { color: C.textoSec, fontSize: 11 }),
+    td(fmtFechaCorta(f.d.fecha), { textAlign: "center", fontWeight: 500 }),
+    td(f.d.diaSem, { textAlign: "center", color: C.textoSec }),
+    td(f.d.horProg || "—", { color: C.textoSec, fontSize: 11 })
+  ];
+  const COLS_BASE = ["Código", "Colaborador", "Gerencia", "UO", "Fecha", "Día", "Horario"];
+  const DEF = {
+    SIN_MARC: { cols: [...COLS_BASE, "H.Deb.", "Deuda", "Observación"], fila: f => [...comunes(f), hm(f.hdeb, C.textoSec), hm(f.deuda, "#DC2626"),
+      td(f.d.absInj ? E("span", { style: { background: "#FEE2E2", color: "#991B1B", fontSize: 10, padding: "1px 6px", borderRadius: 3 } }, `Falta injustificada · ${f.d.absInj}`) : "—")] },
+    MARC_INC: { cols: [...COLS_BASE, "Marca faltante", "Ingreso", "Salida", "H.Deb.", "H.Trab.", "Tardanza", "Sal.Ant.", "Deuda"], fila: f => [...comunes(f),
+      td(E("span", { style: { background: "#EDE9FE", color: "#5B21B6", fontSize: 10, padding: "2px 8px", borderRadius: 4, fontWeight: 600 } }, f.falta), { textAlign: "center" }),
+      td(f.d.ing != null ? minToHHMM(f.d.ing) : "—", { textAlign: "center", color: f.d.ingAutomatic ? C.danger : C.texto, fontWeight: f.d.ingAutomatic ? 600 : 400 }),
+      td(f.d.sal != null ? minToHHMM(f.d.sal) : "—", { textAlign: "center", color: f.d.salAutomatic ? C.danger : C.texto, fontWeight: f.d.salAutomatic ? 600 : 400 }),
+      hm(f.hdeb, C.textoSec), hm(f.trab, C.ok), hm(f.d.tard_min || 0, C.warning), hm(f.d.antic_min || 0, "#EA580C"), hm(f.deuda, "#7C3AED")] },
+    REMOTO: { cols: [...COLS_BASE, "Horas completadas"], fila: f => [...comunes(f), hm(f.trab, "#0F766E")] }
+  };
+  const COLS_C = ["Código", "Colaborador", "Gerencia", "UO", "D.S/Marc", "H.S/Marc", "D.MI", "H.MI", "MI sin ingreso", "MI sin salida", "D.Rem.auto", "H.Rem.auto"];
+  const kpi = t => {
+    const ft = porTipo[t.k];
+    const min = ft.reduce((s, f) => s + (t.k === "SIN_MARC" ? f.deuda : f.trab), 0);
+    const minDeuda = ft.reduce((s, f) => s + f.deuda, 0);
+    const pers = new Set(ft.map(f => f.c.cod)).size;
+    const extra = t.k === "MARC_INC" ? ` · ${ft.filter(f => f.falta === "Ingreso").length} sin ingreso, ${ft.filter(f => f.falta === "Salida").length} sin salida` : "";
+    return E(KpiCard, { key: t.k, label: t.label, value: `${ft.length} días`, sub: `${min > 0 ? fmtMin(min) : "00:00"} h ${t.k === "REMOTO" ? "completadas" : t.k === "MARC_INC" ? `trabajadas (deuda ${minDeuda > 0 ? fmtMin(minDeuda) : "00:00"})` : "de deuda"} · ${pers} colab.${extra}`, color: t.color });
+  };
+  const tabla = (cols, centro, filasEl, orden, click) => E("div", { style: { background: C.surface, border: BRD, borderRadius: 12, overflow: "hidden" } },
+    E("div", { style: { maxHeight: "calc(100vh - 330px)", overflow: "auto" } },
+      E("table", { style: { width: "100%", borderCollapse: "collapse" } },
+        E("thead", null, E("tr", null, ...cols.map(h => th(h, orden, click, centro(h))), E("th", { key: "__det", style: { background: C.surfaceHigh, borderBottom: BRD, position: "sticky", top: 0, zIndex: 2 } }))),
+        E("tbody", null, ...filasEl))));
+  const centroD = h => !["Código", "Colaborador", "Gerencia", "UO", "Horario", "Observación"].includes(h);
+  const filaTr = (key, c, i, celdas) => E("tr", { key, style: { background: i % 2 === 0 ? C.surface : C.surfaceHigh, borderBottom: `0.5px solid ${C.border}20` } }, ...celdas, celdaDetalle(() => onSelectColab && onSelectColab(c)));
+  let contenido;
+  if (tab === "COLAB") {
+    contenido = resumen.length === 0 ? null : tabla(COLS_C, h => !["Código", "Colaborador", "Gerencia", "UO"].includes(h),
+      resumen.map((r, i) => filaTr(r.c.cod, r.c, i, [
+        td(r.c.cod, { color: C.textoMuted }), td(r.c.nombre, { fontWeight: 500, whiteSpace: "nowrap" }),
+        td(r.c.gerencia, { color: GER_COLOR[r.c.gerencia] || C.textoSec, fontSize: 11, fontWeight: 500 }), td(r.c.uo || "—", { color: C.textoSec, fontSize: 11 }),
+        nd(r.SIN_MARC.d, "#DC2626"), hm(r.SIN_MARC.m, "#DC2626"), nd(r.MARC_INC.d, "#7C3AED"), hm(r.MARC_INC.m, "#7C3AED"),
+        nd(r.miIng, "#7C3AED"), nd(r.miSal, "#7C3AED"), nd(r.REMOTO.d, "#0F766E"), hm(r.REMOTO.m, "#0F766E")
+      ])), ordenC, clickOrdenC);
+  } else {
+    const lista = ordTipo(tab);
+    contenido = lista.length === 0 ? null : tabla(DEF[tab].cols, centroD, lista.map((f, i) => filaTr(`${f.c.cod}-${f.d.fecha}`, f.c, i, DEF[tab].fila(f))), ordenD, clickOrdenD);
+  }
+  return E("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+    E("div", { style: { fontSize: 12, color: C.textoSec, lineHeight: 1.5 } },
+      E("b", null, "Sin marcación"), ": día laborable sin ninguna marca (toda la jornada es deuda). ",
+      E("b", null, "Marc. incompleta"), ": falta el ingreso o la salida y se completó con su horario (en rojo). ",
+      E("b", null, "Remoto automático"), ": día de teletrabajo sin marcas, completado con su jornada."),
+    E("div", { style: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 } }, ...TIPOS_INC.map(kpi)),
+    E("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
+      E("input", { value: busq, onChange: e => setBusq(e.target.value), placeholder: "Buscar colaborador...", style: { ...selStyle, flex: 1, minWidth: 200 } }),
+      E("select", { value: gerFiltro, onChange: e => setGerFiltro(e.target.value), style: selStyle }, E("option", { value: "TODAS" }, "Todas las gerencias"), ...gerencias.map(g => E("option", { key: g, value: g }, g))),
+      E("label", { style: { fontSize: 12, color: C.textoSec, display: "flex", alignItems: "center", gap: 6 } }, "Desde", E("input", { type: "date", value: desde, min: datos.periodo.inicio, max: datos.periodo.fin, onChange: e => setDesde(e.target.value), style: { ...selStyle, padding: "6px 8px" } })),
+      E("label", { style: { fontSize: 12, color: C.textoSec, display: "flex", alignItems: "center", gap: 6 } }, "Hasta", E("input", { type: "date", value: hasta, min: datos.periodo.inicio, max: datos.periodo.fin, onChange: e => setHasta(e.target.value), style: { ...selStyle, padding: "6px 8px" } })),
+      E("button", { onClick: () => exportarIncidenciasExcel({ SIN_MARC: ordTipo("SIN_MARC"), MARC_INC: ordTipo("MARC_INC"), REMOTO: ordTipo("REMOTO") }, resumen, `Incidencias_marca_${datos.periodo.fin || ""}`), style: { padding: "8px 16px", borderRadius: 8, border: "none", background: C.accent, color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "⬇ Excel")
+    ),
+    E("div", { style: { display: "flex", borderBottom: BRD } },
+      ...[...TIPOS_INC.map(t => [t.k, `${t.label} (${porTipo[t.k].length})`]), ["COLAB", `Por colaborador (${resumen.length})`]].map(([id, l]) => E("button", { key: id, onClick: () => setTab(id), style: { padding: "10px 18px", border: "none", background: "none", fontSize: 13, fontWeight: tab === id ? 600 : 400, color: tab === id ? C.accent : C.textoSec, borderBottom: tab === id ? `2px solid ${C.accent}` : "2px solid transparent", cursor: "pointer" } }, l))
+    ),
+    contenido || E("div", { style: { padding: 30, textAlign: "center", color: C.textoMuted, fontSize: 13 } }, "No hay registros con estos filtros.")
+  );
+}
+
+// ─── MARCACIONES EN DÍAS LIBRES (descanso, feriado, absentismo) ──────────────
+const TIPOS_DL = [
+  { k: "Descanso", color: "#075985", bg: "#E0F2FE" },
+  { k: "Feriado", color: "#1D4ED8", bg: "#DBEAFE" },
+  { k: "Absentismo", color: "#7C3AED", bg: "#EDE9FE" }
+];
+function filasDiasLibres(colaboradores) {
+  const filas = [];
+  colaboradores.forEach(c => c.tareo.forEach(d => {
+    const libre = d.estado === "DESC_TRAB" || d.estado === "FER_TRAB";
+    if (!libre && !d.absObs) return;
+    const tipo = d.estado === "DESC_TRAB" ? "Descanso" : d.estado === "FER_TRAB" ? "Feriado" : "Absentismo";
+    const incompleta = libre ? !!d.marcaIncompleta : (d.estado === "MARC_INC");
+    filas.push({ c, d, tipo, detalle: d.absObs || "", horas: (libre ? d.hhee_min : d.trab_min) || 0, incompleta });
+  }));
+  return filas;
+}
+function exportarDiasLibresExcel(filas, resumen, nombreArchivo) {
+  const wb = XLSX.utils.book_new();
+  const f1 = [["Cód.Trab", "Nombres", "Gerencia", "UO", "Posición", "Fecha", "Día", "Tipo", "Absentismo", "Horario prog.", "Ingreso", "Salida", "Horas marcadas", "Observación"]];
+  filas.forEach(({ c, d, tipo, detalle, horas, incompleta }) => f1.push([
+    c.cod, c.nombre, c.gerencia, c.uo, c.pos, xFecha(d.fecha), d.diaSem, tipo, detalle, d.horProg || "",
+    d.ing != null && !d.ingAutomatic ? xHora(d.ing) : "", d.sal != null && !d.salAutomatic ? xHora(d.sal) : "", xMin(horas),
+    [incompleta ? "Marca incompleta" : "", tipo === "Absentismo" ? "Día calculado como laborable" : "HHEE informativa (no entra en deuda)"].filter(Boolean).join(" · ")
+  ]));
+  XLSX.utils.book_append_sheet(wb, hojaExcel(f1, [8, 30, 22, 22, 28, 11, 5, 11, 20, 13, 8, 8, 10, 40]), "Detalle");
+  const f2 = [["Cód.Trab", "Nombres", "Gerencia", "UO", "D.Descanso", "H.Descanso", "D.Feriado", "H.Feriado", "D.Absentismo", "H.Absentismo", "Total días", "Total horas"]];
+  resumen.forEach(r => f2.push([r.c.cod, r.c.nombre, r.c.gerencia, r.c.uo, r.Descanso.d, xMin(r.Descanso.m), r.Feriado.d, xMin(r.Feriado.m), r.Absentismo.d, xMin(r.Absentismo.m), r.dTot, xMin(r.mTot)]));
+  XLSX.utils.book_append_sheet(wb, hojaExcel(f2, [8, 30, 22, 22, 10, 10, 10, 10, 12, 12, 10, 11]), "Por colaborador");
+  XLSX.writeFile(wb, nombreArchivo + ".xlsx");
+}
+function PaginaDiasLibres({ datos, onSelectColab }) {
+  const E = React.createElement;
+  const { colaboradores } = datos;
+  const [busq, setBusq] = useState("");
+  const [gerFiltro, setGerFiltro] = useState("TODAS");
+  const [tipoFiltro, setTipoFiltro] = useState("TODOS");
+  const [desde, setDesde] = useState("");
+  const [hasta, setHasta] = useState("");
+  const [tab, setTab] = useState("detalle");
+  const [ordenD, clickOrdenD] = useOrden("Fecha", "asc");
+  const [ordenC, clickOrdenC] = useOrden("Total horas", "desc");
+  const gerencias = useMemo(() => [...new Set(colaboradores.map(c => c.gerencia))].sort(), [colaboradores]);
+  const todas = useMemo(() => filasDiasLibres(colaboradores), [colaboradores]);
+  const filas = todas.filter(f =>
+    (gerFiltro === "TODAS" || f.c.gerencia === gerFiltro) &&
+    (tipoFiltro === "TODOS" || f.tipo === tipoFiltro) &&
+    (!desde || f.d.fecha >= desde) && (!hasta || f.d.fecha <= hasta) &&
+    (!busq.trim() || f.c.nombre.toLowerCase().includes(busq.toLowerCase()) || String(f.c.cod).includes(busq))
+  );
+  // Resumen por colaborador
+  const resMap = {};
+  filas.forEach(f => {
+    if (!resMap[f.c.cod]) resMap[f.c.cod] = { c: f.c, Descanso: { d: 0, m: 0 }, Feriado: { d: 0, m: 0 }, Absentismo: { d: 0, m: 0 }, dTot: 0, mTot: 0 };
+    const r = resMap[f.c.cod];
+    r[f.tipo].d++; r[f.tipo].m += f.horas; r.dTot++; r.mTot += f.horas;
+  });
+  const GET_D = { "Código": f => f.c.cod, "Colaborador": f => f.c.nombre, "Gerencia": f => f.c.gerencia, "UO": f => f.c.uo, "Fecha": f => f.d.fecha, "Día": f => f.d.diaSem, "Tipo": f => f.tipo, "Absentismo": f => f.detalle, "Horario prog.": f => f.d.horProg || "", "Ingreso": f => f.d.ing ?? -1, "Salida": f => f.d.sal ?? -1, "Horas marcadas": f => f.horas, "Observación": f => f.incompleta ? "1" : "" };
+  const GET_C = { "Código": r => r.c.cod, "Colaborador": r => r.c.nombre, "Gerencia": r => r.c.gerencia, "UO": r => r.c.uo, "D.Desc.": r => r.Descanso.d, "H.Desc.": r => r.Descanso.m, "D.Fer.": r => r.Feriado.d, "H.Fer.": r => r.Feriado.m, "D.Abs.": r => r.Absentismo.d, "H.Abs.": r => r.Absentismo.m, "Total días": r => r.dTot, "Total horas": r => r.mTot };
+  const filasOrd = ordenar(filas, ordenD, GET_D);
+  const resumen = ordenar(Object.values(resMap), ordenC, GET_C);
+  const selStyle = { padding: "8px 12px", border: BRD, borderRadius: 8, fontSize: 13, background: C.surface };
+  const th = (h, orden, click, centro) => E("th", { key: h, onClick: () => click(h), title: "Ordenar por esta columna", style: { cursor: "pointer", userSelect: "none", padding: "8px 10px", fontWeight: 600, color: C.textoMuted, fontSize: 10, whiteSpace: "nowrap", borderBottom: BRD, textTransform: "uppercase", textAlign: centro ? "center" : "left", background: C.surfaceHigh, position: "sticky", top: 0, zIndex: 2 } }, h, flechaOrden(orden, h));
+  const td = (v, st) => E("td", { style: { padding: "7px 10px", fontSize: 12, ...(st || {}) } }, v);
+  const badgeTipo = t => { const s = TIPOS_DL.find(x => x.k === t); return E("span", { style: { background: s.bg, color: s.color, fontSize: 10, padding: "2px 8px", borderRadius: 4, fontWeight: 600 } }, t); };
+  const kpis = TIPOS_DL.map(t => {
+    const ft = filas.filter(f => f.tipo === t.k);
+    return { ...t, dias: ft.length, horas: ft.reduce((s, f) => s + f.horas, 0), personas: new Set(ft.map(f => f.c.cod)).size };
+  });
+  const COLS_D = ["Código", "Colaborador", "Gerencia", "UO", "Fecha", "Día", "Tipo", "Absentismo", "Horario prog.", "Ingreso", "Salida", "Horas marcadas", "Observación"];
+  const COLS_C = ["Código", "Colaborador", "Gerencia", "UO", "D.Desc.", "H.Desc.", "D.Fer.", "H.Fer.", "D.Abs.", "H.Abs.", "Total días", "Total horas"];
+  return E("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+    E("div", { style: { fontSize: 12, color: C.textoSec, lineHeight: 1.5 } },
+      "Días en que el colaborador marcó sin tener que trabajar. ",
+      E("b", null, "Descanso y Feriado"), ": horas como HHEE informativas, no entran en la deuda. ",
+      E("b", null, "Absentismo"), " (vacaciones, DM, licencia, etc.): el día se calcula como laborable normal."),
+    E("div", { style: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 } },
+      E(KpiCard, { label: "Total", value: `${filas.length} días`, sub: `${fmtMin(filas.reduce((s, f) => s + f.horas, 0))} h · ${Object.keys(resMap).length} colaboradores`, color: C.texto }),
+      ...kpis.map(k => E(KpiCard, { key: k.k, label: k.k, value: `${k.dias} días`, sub: `${fmtMin(k.horas)} h · ${k.personas} colaboradores`, color: k.color }))
+    ),
+    E("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
+      E("input", { value: busq, onChange: e => setBusq(e.target.value), placeholder: "Buscar colaborador...", style: { ...selStyle, flex: 1, minWidth: 200 } }),
+      E("select", { value: gerFiltro, onChange: e => setGerFiltro(e.target.value), style: selStyle }, E("option", { value: "TODAS" }, "Todas las gerencias"), ...gerencias.map(g => E("option", { key: g, value: g }, g))),
+      E("select", { value: tipoFiltro, onChange: e => setTipoFiltro(e.target.value), style: selStyle }, E("option", { value: "TODOS" }, "Todos los tipos"), ...TIPOS_DL.map(t => E("option", { key: t.k, value: t.k }, t.k))),
+      E("label", { style: { fontSize: 12, color: C.textoSec, display: "flex", alignItems: "center", gap: 6 } }, "Desde", E("input", { type: "date", value: desde, onChange: e => setDesde(e.target.value), style: { ...selStyle, padding: "6px 8px" } })),
+      E("label", { style: { fontSize: 12, color: C.textoSec, display: "flex", alignItems: "center", gap: 6 } }, "Hasta", E("input", { type: "date", value: hasta, onChange: e => setHasta(e.target.value), style: { ...selStyle, padding: "6px 8px" } })),
+      E("button", { onClick: () => exportarDiasLibresExcel(filasOrd, resumen, `Marcaciones_dias_libres_${datos.periodo.fin || ""}`), style: { padding: "8px 16px", borderRadius: 8, border: "none", background: C.accent, color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer" } }, "⬇ Excel")
+    ),
+    E("div", { style: { display: "flex", borderBottom: BRD } },
+      ...[["detalle", `Detalle (${filas.length})`], ["colab", `Por colaborador (${resumen.length})`]].map(([id, l]) => E("button", { key: id, onClick: () => setTab(id), style: { padding: "10px 18px", border: "none", background: "none", fontSize: 13, fontWeight: tab === id ? 600 : 400, color: tab === id ? C.accent : C.textoSec, borderBottom: tab === id ? `2px solid ${C.accent}` : "2px solid transparent", cursor: "pointer" } }, l))
+    ),
+    filas.length === 0 ? E("div", { style: { padding: 30, textAlign: "center", color: C.textoMuted, fontSize: 13 } }, "No hay marcaciones en días libres con estos filtros.") :
+    E("div", { style: { background: C.surface, border: BRD, borderRadius: 12, overflow: "hidden" } },
+      E("div", { style: { maxHeight: "calc(100vh - 330px)", overflow: "auto" } },
+        tab === "detalle"
+          ? E("table", { style: { width: "100%", borderCollapse: "collapse" } },
+              E("thead", null, E("tr", null, ...COLS_D.map(h => th(h, ordenD, clickOrdenD, ["Fecha", "Día", "Ingreso", "Salida", "Horas marcadas"].includes(h))), E("th", { key: "__det", style: { background: C.surfaceHigh, borderBottom: BRD, position: "sticky", top: 0, zIndex: 2 } }))),
+              E("tbody", null, ...filasOrd.map((f, i) => E("tr", { key: `${f.c.cod}-${f.d.fecha}`, style: { background: i % 2 === 0 ? C.surface : C.surfaceHigh, borderBottom: `0.5px solid ${C.border}20` } },
+                td(f.c.cod, { color: C.textoMuted }),
+                td(f.c.nombre, { fontWeight: 500, whiteSpace: "nowrap" }),
+                td(f.c.gerencia, { color: GER_COLOR[f.c.gerencia] || C.textoSec, fontSize: 11, fontWeight: 500 }),
+                td(f.c.uo || "—", { color: C.textoSec, fontSize: 11 }),
+                td(fmtFechaCorta(f.d.fecha), { textAlign: "center", fontWeight: 500 }),
+                td(f.d.diaSem, { textAlign: "center", color: C.textoSec }),
+                td(badgeTipo(f.tipo)),
+                td(f.detalle || "—", { color: "#7C3AED", fontSize: 11 }),
+                td(f.d.horProg || "—", { color: C.textoSec, fontSize: 11 }),
+                td(f.d.ing != null ? minToHHMM(f.d.ing) : "—", { textAlign: "center", color: f.d.ingAutomatic ? C.danger : C.texto }),
+                td(f.d.sal != null ? minToHHMM(f.d.sal) : "—", { textAlign: "center", color: f.d.salAutomatic ? C.danger : C.texto }),
+                td(f.horas > 0 ? fmtMin(f.horas) : "00:00", { textAlign: "center", fontWeight: 600, color: C.ok }),
+                td(f.incompleta ? E("span", { style: { background: "#FEF3C7", color: "#92400E", fontSize: 10, padding: "1px 6px", borderRadius: 3 } }, "Marca incompleta") : "—"),
+                celdaDetalle(() => onSelectColab && onSelectColab(f.c))
+              )))
+            )
+          : E("table", { style: { width: "100%", borderCollapse: "collapse" } },
+              E("thead", null, E("tr", null, ...COLS_C.map(h => th(h, ordenC, clickOrdenC, !["Código", "Colaborador", "Gerencia", "UO"].includes(h))), E("th", { key: "__det", style: { background: C.surfaceHigh, borderBottom: BRD, position: "sticky", top: 0, zIndex: 2 } }))),
+              E("tbody", null, ...resumen.map((r, i) => E("tr", { key: r.c.cod, style: { background: i % 2 === 0 ? C.surface : C.surfaceHigh, borderBottom: `0.5px solid ${C.border}20` } },
+                td(r.c.cod, { color: C.textoMuted }),
+                td(r.c.nombre, { fontWeight: 500, whiteSpace: "nowrap" }),
+                td(r.c.gerencia, { color: GER_COLOR[r.c.gerencia] || C.textoSec, fontSize: 11, fontWeight: 500 }),
+                td(r.c.uo || "—", { color: C.textoSec, fontSize: 11 }),
+                ...TIPOS_DL.flatMap(t => [
+                  td(r[t.k].d || 0, { textAlign: "center", color: r[t.k].d ? t.color : C.textoMuted }),
+                  td(r[t.k].m ? fmtMin(r[t.k].m) : "00:00", { textAlign: "center", color: r[t.k].m ? t.color : C.textoMuted })
+                ]),
+                td(r.dTot, { textAlign: "center", fontWeight: 600 }),
+                td(fmtMin(r.mTot), { textAlign: "center", fontWeight: 600, color: C.ok }),
+                celdaDetalle(() => onSelectColab && onSelectColab(r.c))
+              )))
+            )
+      )
+    )
+  );
+}
+
+// ─── MÓDULO COMPARATIVO POR POSICIÓN ─────────────────────────────────────────
+function PaginaComparativo({datos, onSelectColab}) {
+  const [posFiltro, setPosFiltro] = React.useState('');
+  const [gerFiltro, setGerFiltro] = React.useState('TODAS');
+  const {colaboradores} = datos;
+  const E = React.createElement;
+
+  const posiciones = React.useMemo(()=>[...new Set(colaboradores.map(c=>c.pos).filter(Boolean))].sort(),[colaboradores]);
+  const gerencias = React.useMemo(()=>[...new Set(colaboradores.map(c=>c.gerencia))].sort(),[colaboradores]);
+
+  const colabFiltrados = React.useMemo(()=>{
+    let r = colaboradores;
+    if (gerFiltro !== 'TODAS') r = r.filter(c=>c.gerencia===gerFiltro);
+    if (posFiltro) r = r.filter(c=>c.pos===posFiltro);
+    return [...r].sort((a,b)=>b.cumpl_48-a.cumpl_48);
+  },[posFiltro,gerFiltro,colaboradores]);
+  const [orden, clickOrden] = useOrden('Cumpl.48h', 'asc');
+  const GET_POS = {
+    'Colaborador': c=>c.nombre, 'Gerencia': c=>c.gerencia, 'UO': c=>c.uo, 'H.Deb.': c=>c.h_deb, 'H.Real': c=>c.h_real, ...GET_BLOQUE,
+    'Deuda': c=>c.deuda_op, 'Excedente': c=>c.excedente, 'Cumpl.Prog.': c=>c.cumpl_jornada, 'Déf.48h': c=>c.deficit_48,
+    'Deuda Neta': c=>c.deuda_neta, 'Cumpl.48h': c=>c.cumpl_48, 'Causa Prog.': c=>(getCausaDeuda(c)||{}).label||'', 'Causa Déficit': c=>(getCausaDN(c)||{}).label||''
+  };
+  const colabTabla = ordenar(colabFiltrados, orden, GET_POS);
+
+  const posAgrupadas = React.useMemo(()=>{
+    if (posFiltro) return null;
+    const map = {};
+    colabFiltrados.forEach(c=>{
+      if (!map[c.pos]) map[c.pos]={pos:c.pos,colab:[],sumCumpl:0};
+      map[c.pos].colab.push(c);
+      map[c.pos].sumCumpl+=c.cumpl_48;
+    });
+    return Object.values(map).map(g=>({...g,promCumpl:parseFloat((g.sumCumpl/g.colab.length).toFixed(1)),maxDN:Math.max(...g.colab.map(c=>c.deuda_neta)),minDN:Math.min(...g.colab.map(c=>c.deuda_neta))}))
+      .filter(g=>g.colab.length>1)
+      .sort((a,b)=>a.promCumpl-b.promCumpl);
+  },[colabFiltrados,posFiltro]);
+
+  const maxDN = colabFiltrados.length > 0 ? Math.max(...colabFiltrados.map(c=>c.deuda_neta)) : 1;
+  const promCumpl = colabFiltrados.length > 0 ? (colabFiltrados.reduce((s,c)=>s+c.cumpl_48,0)/colabFiltrados.length).toFixed(1) : 0;
+
+  return E('div',{style:{display:'flex',flexDirection:'column',gap:12}},
+    // Filtros
+    E('div',{style:{display:'flex',gap:10,flexWrap:'wrap'}},
+      E('select',{value:gerFiltro,onChange:e=>setGerFiltro(e.target.value),style:{padding:'8px 12px',border:BRD,borderRadius:8,fontSize:13,background:C.surface}},
+        E('option',{value:'TODAS'},'Todas las gerencias'),
+        ...gerencias.map(g=>E('option',{key:g,value:g},g))
+      ),
+      E('select',{value:posFiltro,onChange:e=>setPosFiltro(e.target.value),style:{flex:1,padding:'8px 12px',border:BRD,borderRadius:8,fontSize:13,background:C.surface}},
+        E('option',{value:''},'-- Selecciona una posición --'),
+        ...posiciones.map(p=>E('option',{key:p,value:p},p))
+      )
+    , /*#__PURE__*/React.createElement("button", {
+      onClick:()=>exportarResumenExcel(colabFiltrados, `Posicion_Jornada_${datos.periodo.fin||''}`),
+      style:{padding:"8px 14px",borderRadius:8,border:"none",background:C.accent,color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer"}
+    }, "⬇ Excel"),),
+
+    // Vista sin posición seleccionada — ranking de posiciones
+    !posFiltro && posAgrupadas && E('div',{style:{display:'flex',flexDirection:'column',gap:10}},
+      E('div',{style:{fontSize:12,color:C.textoMuted}},`${posAgrupadas.length} posiciones con más de 1 colaborador`),
+      E('div',{style:{background:C.surface,border:BRD,borderRadius:12,overflow:'hidden'}},
+        E('div',{style:{padding:'10px 14px',borderBottom:BRD,fontSize:13,fontWeight:500}}, 'Posiciones — comparativo de cumplimiento'),
+        E('div',{style:{overflowX:'auto'}},
+          E('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:12}},
+            E('thead',null,
+              E('tr',{style:{background:C.surfaceHigh}},
+                ...['Posición','Colab.','Prom.Cumpl.','Mejor','Peor','Max DN','Min DN'].map(h=>
+                  E('th',{key:h,style:{padding:'7px 10px',fontWeight:600,color:C.textoMuted,fontSize:10,textTransform:'uppercase',borderBottom:BRD,textAlign:h==='Posición'?'left':'center'}},h)
+                )
+              )
+            ),
+            E('tbody',null,
+              ...posAgrupadas.map((g,i)=>{
+                const mejor = g.colab.reduce((a,b)=>a.cumpl_48>b.cumpl_48?a:b);
+                const peor = g.colab.reduce((a,b)=>a.cumpl_48<b.cumpl_48?a:b);
+                return E('tr',{key:g.pos,style:{background:i%2===0?C.surface:C.surfaceHigh,borderBottom:`0.5px solid ${C.border}20`,cursor:'pointer'},
+                  onClick:()=>setPosFiltro(g.pos),
+                  onMouseEnter:e=>e.currentTarget.style.background='#F0FDF4',
+                  onMouseLeave:e=>e.currentTarget.style.background=i%2===0?C.surface:C.surfaceHigh},
+                  E('td',{style:{padding:'7px 10px',fontWeight:500}},g.pos.length>40?g.pos.slice(0,40)+'…':g.pos),
+                  E('td',{style:{padding:'7px 10px',textAlign:'center',color:C.textoSec}},g.colab.length),
+                  E('td',{style:{padding:'7px 10px',textAlign:'center',fontWeight:600,color:g.promCumpl<50?C.danger:g.promCumpl<80?C.warning:C.ok}},fmtPct(g.promCumpl)),
+                  E('td',{style:{padding:'7px 10px',textAlign:'center',color:C.ok,fontSize:11}},mejor.nombre.split(' ').slice(0,2).join(' ')+` (${fmtPct(mejor.cumpl_48)})`),
+                  E('td',{style:{padding:'7px 10px',textAlign:'center',color:C.danger,fontSize:11}},peor.nombre.split(' ').slice(0,2).join(' ')+` (${fmtPct(peor.cumpl_48)})`),
+                  E('td',{style:{padding:'7px 10px',textAlign:'center',color:C.danger}},fmtH(g.maxDN)),
+                  E('td',{style:{padding:'7px 10px',textAlign:'center',color:C.ok}},fmtH(g.minDN))
+                );
+              })
+            )
+          )
+        )
+      )
+    ),
+
+    // Vista con posición seleccionada — detalle comparativo
+    posFiltro && colabFiltrados.length > 0 && E('div',{style:{display:'flex',flexDirection:'column',gap:12}},
+      E('button',{onClick:()=>setPosFiltro(''),style:{display:'flex',alignItems:'center',gap:6,padding:'6px 12px',border:BRD,borderRadius:8,background:C.surface,color:C.textoSec,fontSize:12,cursor:'pointer',width:'fit-content'}},'← Volver'),
+      // Header posición
+      E('div',{style:{background:C.surface,border:BRD,borderRadius:12,padding:'14px 16px'}},
+        E('div',{style:{fontSize:16,fontWeight:500,color:C.texto,marginBottom:8}},posFiltro),
+        E('div',{style:{display:'flex',gap:20,flexWrap:'wrap'}},
+          E('div',{style:{textAlign:'center'}}, E('div',{style:{fontSize:11,color:C.textoMuted}},'Colaboradores'), E('div',{style:{fontSize:20,fontWeight:500}},colabFiltrados.length)),
+          E('div',{style:{textAlign:'center'}}, E('div',{style:{fontSize:11,color:C.textoMuted}},'Prom. Cumpl.'), E('div',{style:{fontSize:20,fontWeight:500,color:parseFloat(promCumpl)<50?C.danger:C.warning}},fmtPct(promCumpl))),
+          E('div',{style:{textAlign:'center'}}, E('div',{style:{fontSize:11,color:C.textoMuted}},'Mejor cumpl.'), E('div',{style:{fontSize:20,fontWeight:500,color:C.ok}},fmtPct(colabFiltrados[0].cumpl_48))),
+          E('div',{style:{textAlign:'center'}}, E('div',{style:{fontSize:11,color:C.textoMuted}},'Peor cumpl.'), E('div',{style:{fontSize:20,fontWeight:500,color:C.danger}},fmtPct(colabFiltrados[colabFiltrados.length-1].cumpl_48)))
+        )
+      ),
+      // Barras comparativas
+      E('div',{style:{background:C.surface,border:BRD,borderRadius:12,padding:'14px 16px'}},
+        E('div',{style:{fontSize:13,fontWeight:500,marginBottom:12}},'Cumplimiento 48h por colaborador'),
+        E('div',{style:{display:'flex',flexDirection:'column',gap:8}},
+          ...colabFiltrados.map((c,i)=>{
+            const isMejor = i===0;
+            const isPeor = i===colabFiltrados.length-1;
+            return E('div',{key:c.cod},
+              E('div',{style:{display:'flex',justifyContent:'space-between',marginBottom:3}},
+                E('div',{style:{display:'flex',alignItems:'center',gap:6}},
+                  isMejor && E('span',{style:{background:'#D1FAE5',color:'#065F46',fontSize:9,padding:'1px 5px',borderRadius:3,fontWeight:500}},'↑ mejor'),
+                  isPeor && E('span',{style:{background:'#FEE2E2',color:'#991B1B',fontSize:9,padding:'1px 5px',borderRadius:3,fontWeight:500}},'↓ peor'),
+                  E('span',{style:{fontSize:12,fontWeight:500}},c.nombre.split(' ').slice(0,3).join(' ')),
+                  E('span',{style:{fontSize:11,color:GER_COLOR[c.gerencia]||C.textoSec}},c.gerencia)
+                ),
+                E('div',{style:{display:'flex',gap:12,fontSize:11}},
+                  E('span',{style:{color:C.textoSec}},'DN: '+fmtH(c.deuda_neta)),
+                  E('span',{style:{fontWeight:600,color:c.cumpl_48<50?C.danger:c.cumpl_48<80?C.warning:C.ok}},fmtPct(c.cumpl_48))
+                )
+              ),
+              E('div',{style:{background:'#F0F0F0',borderRadius:3,height:8}},
+                E('div',{style:{background:c.cumpl_48<50?C.danger:c.cumpl_48<80?C.warning:C.ok,width:`${c.cumpl_48}%`,height:8,borderRadius:3,transition:'width 0.3s'}})
+              )
+            );
+          })
+        )
+      ),
+      // Tabla detalle
+      E('div',{style:{background:C.surface,border:BRD,borderRadius:12,overflow:'hidden'}},
+        E('div',{style:{padding:'10px 14px',borderBottom:BRD,fontSize:13,fontWeight:500}},'Detalle comparativo'),
+        E('div',{className:'tabla-fija fija-1',style:{overflowX:'auto'}},
+          E('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:12}},
+            E('thead',null,
+              E('tr',{style:{background:C.surfaceHigh}},
+                ...['Colaborador','Gerencia','UO','H.Deb.','H.Real',...COLS_BLOQUE,'Deuda','Excedente','Cumpl.Prog.','Déf.48h','Deuda Neta','Cumpl.48h','Causa Prog.','Causa Déficit',''].map(h=>
+                  E('th',{key:h,onClick:()=>clickOrden(h),title:'Ordenar por esta columna',style:{cursor:'pointer',userSelect:'none',padding:'7px 10px',fontWeight:600,color:C.textoMuted,fontSize:10,textTransform:'uppercase',borderBottom:BRD,whiteSpace:'nowrap',textAlign:['H.Deb.','H.Real',...COLS_BLOQUE,'Deuda','Excedente','Cumpl.Prog.','Déf.48h','Deuda Neta','Cumpl.48h'].includes(h)?'center':'left'}},h,flechaOrden(orden,h))
+                )
+              )
+            ),
+            E('tbody',null,
+              ...colabTabla.map((c,i)=>E('tr',{key:c.cod,style:{background:i%2===0?C.surface:C.surfaceHigh,borderBottom:`0.5px solid ${C.border}20`}},
+                E('td',{style:{padding:'7px 10px',fontWeight:500,whiteSpace:'nowrap'}},c.nombre.split(' ').slice(0,3).join(' ')),
+                E('td',{style:{padding:'7px 10px',color:GER_COLOR[c.gerencia]||C.textoSec,fontWeight:500,fontSize:11}},c.gerencia),
+                E('td',{style:{padding:'7px 10px',color:C.textoSec,fontSize:11}},c.uo||'—'),
+                E('td',{style:{padding:'7px 10px',textAlign:'center',color:C.textoSec}},fmtH(c.h_deb)),
+                E('td',{style:{padding:'7px 10px',textAlign:'center',color:C.ok}},fmtH(c.h_real)),
+                ...celdasBloque(c),
+                E('td',{style:{padding:'7px 10px',textAlign:'center',color:c.deuda_op>0?C.warning:C.textoMuted,fontWeight:c.deuda_op>0?600:400}},fmtH(c.deuda_op||0)), celdaExc(c.excedente),
+                E('td',{style:{padding:'7px 10px',textAlign:'center',fontWeight:600,color:c.cumpl_jornada<50?C.danger:c.cumpl_jornada<80?C.warning:C.ok}},fmtPct(c.cumpl_jornada)),
+                E('td',{style:{padding:'7px 10px',textAlign:'center',color:c.deficit_48>0?C.info:C.textoMuted}},fmtH(c.deficit_48||0)),
+                E('td',{style:{padding:'7px 10px',textAlign:'center',fontWeight:600,color:C.danger}},fmtH(c.deuda_neta)),
+                E('td',{style:{padding:'7px 10px',textAlign:'center',fontWeight:600,color:c.cumpl_48<50?C.danger:c.cumpl_48<80?C.warning:C.ok}},fmtPct(c.cumpl_48)),
+                E('td',{style:{padding:'7px 10px',whiteSpace:'nowrap'}},(()=>{const t=getCausaDeuda(c); return t?E('span',{style:{background:t.bg,color:t.color,fontSize:11,padding:'2px 8px',borderRadius:4,fontWeight:500}},t.label):E('span',{style:{color:C.ok,fontSize:11,fontWeight:500}},'✓ Sin deuda');})()),
+                E('td',{style:{padding:'7px 10px',whiteSpace:'nowrap'}},E(CausaBadge,{c})),
+                celdaDetalle(() => onSelectColab && onSelectColab(c))
+              ))
+            )
+          )
+        )
+      )
+    )
+  );
+}
+
+
+// ─── APP ──────────────────────────────────────────────────────────────────────
+function App() {
+  const [datos, setDatos] = useState(null);
+  const [datosOriginales, setDatosOriginales] = useState(null);
+  const [pagina, setPagina] = useState("importacion");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [procesando, setProcesando] = useState(false);
+  const [fechaCorte, setFechaCorte] = useState(null);
+  const [colabSel, setColabSel] = useState(null);
+  const tieneData = !!datos;
+  const MENU = [{
+    id: "importacion",
+    label: "Importación",
+    icon: "⬆"
+  }, {
+    id: "dashboard",
+    label: "Dashboard",
+    icon: "📊"
+  }, {
+    id: "gerencias",
+    label: "Por gerencia",
+    icon: "🏢"
+  }, {
+    id: "causas",
+    label: "Causas de deuda",
+    icon: "🔍"
+  }, {
+    id: "colaboradores",
+    label: "Colaboradores",
+    icon: "👤"
+  }, {
+    id: "kronos",
+    label: "Kronos",
+    icon: "📋"
+  }, {
+    id: "incidencias",
+    label: "Incidencias de marca",
+    icon: "⚠"
+  }, {
+    id: "diaslibres",
+    label: "Marc. días libres",
+    icon: "🗓"
+  }, {
+    id: "comparativo",
+    label: "Por posición",
+    icon: "📊"
+  }];
+  const [tol, setTol] = useState(0);
+  const [perSel, setPerSel] = useState("acum"); // id de mes, "acum" o "pers"
+  const [ini, setIni] = useState(null);
+  const [finPer, setFinPer] = useState(null);
+  const CLAVE_LS = "nidogestor_jornada_ultimo_v1";
+  const [guardado, setGuardado] = useState(() => {
+    try {
+      const s = localStorage.getItem(CLAVE_LS);
+      return s ? JSON.parse(s) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+  const [errorGuardado, setErrorGuardado] = useState(false);
+  const guardarLocal = (orig, fc, t, sel) => {
+    const base = { fechaCorte: fc, tol: t, sel: sel || null, guardado: new Date().toISOString() };
+    try {
+      const obj = { ...base, orig };
+      localStorage.setItem(CLAVE_LS, JSON.stringify(obj));
+      setGuardado(obj);
+      setErrorGuardado(false);
+      return;
+    } catch (e) {
+      console.warn("Análisis completo muy grande, se guarda solo el período elegido:", e);
+    }
+    try {
+      // Plan B: solo el período que se está viendo
+      const d0 = sel && sel.ini ? sel.ini : orig.periodo.inicio, d1 = sel && sel.finPer ? sel.finPer : orig.periodo.finOriginal;
+      const reducido = { ...orig, periodo: { ...orig.periodo, inicio: d0, finOriginal: d1 }, colaboradores: orig.colaboradores.map(c => ({ ...c, tareo: c.tareo.filter(d => d.fecha >= d0 && d.fecha <= d1) })).filter(c => c.tareo.length > 0) };
+      const obj = { ...base, orig: reducido, parcial: true };
+      localStorage.setItem(CLAVE_LS, JSON.stringify(obj));
+      setGuardado(obj);
+      setErrorGuardado("parcial");
+    } catch (e2) {
+      console.warn("No se pudo guardar el análisis en el navegador:", e2);
+      setErrorGuardado(true);
+    }
+  };
+  const onCargado = useCallback((r, fc, t, sel) => {
+    const tolIni = t !== undefined ? t : 0;
+    // Por defecto: el último mes de planilla cargado (si hay un solo mes, es todo)
+    const pers = periodosPlanilla(r.periodo.inicio, r.periodo.finOriginal);
+    let s = sel;
+    if (!s || !s.ini) {
+      const ult = pers[pers.length - 1];
+      s = ult ? { id: ult.id, ini: ult.desde, finPer: ult.hasta } : { id: "acum", ini: r.periodo.inicio, finPer: r.periodo.finOriginal };
+    }
+    const fin = fc && fc >= s.ini && fc <= s.finPer ? fc : s.finPer;
+    setDatosOriginales(r);
+    setDatos(recalcularDatos(r, fin, tolIni, s.ini));
+    setPerSel(s.id);
+    setIni(s.ini);
+    setFinPer(s.finPer);
+    setFechaCorte(fin);
+    setTol(tolIni);
+    setColabSel(null);
+    setPagina("dashboard");
+    guardarLocal(r, fin, tolIni, s);
+  }, []);
+  const restaurarGuardado = () => {
+    if (!guardado || !guardado.orig) return;
+    onCargado(guardado.orig, guardado.fechaCorte, guardado.tol || 0, guardado.sel || null);
+  };
+  const aplicarCambios = (fin, t, s) => {
+    if (!datosOriginales) return;
+    const sel = s || { id: perSel, ini, finPer };
+    setProcesando(true);
+    setTimeout(() => {
+      try {
+        setDatos(recalcularDatos(datosOriginales, fin, t, sel.ini));
+        setFechaCorte(fin);
+        setTol(t);
+        setPerSel(sel.id);
+        setIni(sel.ini);
+        setFinPer(sel.finPer);
+        guardarLocal(datosOriginales, fin, t, sel);
+      } catch (err) {
+        alert("Error al recalcular: " + err.message);
+        console.error(err);
+      } finally {
+        setProcesando(false);
+      }
+    }, 50);
+  };
+  const cambiarCorte = nuevaFecha => {
+    if (!nuevaFecha) return;
+    const f = nuevaFecha < ini ? ini : nuevaFecha > finPer ? finPer : nuevaFecha;
+    aplicarCambios(f, tol);
+  };
+  const cambiarTol = t => aplicarCambios(fechaCorte, Math.max(0, Math.min(60, parseInt(t) || 0)));
+  const periodos = datosOriginales ? periodosPlanilla(datosOriginales.periodo.inicio, datosOriginales.periodo.finOriginal) : [];
+  const cambiarPeriodo = id => {
+    if (!datosOriginales) return;
+    const po = datosOriginales.periodo;
+    if (id === "acum") return aplicarCambios(po.finOriginal, tol, { id, ini: po.inicio, finPer: po.finOriginal });
+    if (id === "pers") return aplicarCambios(fechaCorte, tol, { id, ini, finPer: po.finOriginal });
+    const pm = periodos.find(x => x.id === id);
+    if (pm) aplicarCambios(pm.hasta, tol, { id, ini: pm.desde, finPer: pm.hasta });
+  };
+  const cambiarDesdePers = d => {
+    if (!d || !datosOriginales) return;
+    const po = datosOriginales.periodo;
+    const nIni = d < po.inicio ? po.inicio : d > fechaCorte ? fechaCorte : d;
+    aplicarCambios(fechaCorte, tol, { id: "pers", ini: nIni, finPer: po.finOriginal });
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "app-root",
+    style: {
+      display: "flex",
+      height: "100vh",
+      overflow: "hidden"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "no-print",
+    style: {
+      width: sidebarOpen ? 220 : 64,
+      minWidth: sidebarOpen ? 220 : 64,
+      background: "#1A5C2E",
+      borderRight: "1px solid #14472A",
+      display: "flex",
+      flexDirection: "column",
+      transition: "width 0.25s, min-width 0.25s",
+      overflow: "hidden"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "16px 12px",
+      borderBottom: "1px solid #14472A",
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      cursor: "pointer",
+      background: "#12391F"
+    },
+    onClick: () => setSidebarOpen(o => !o)
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: 36,
+      height: 36,
+      flexShrink: 0,
+      borderRadius: 8,
+      overflow: "hidden",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center"
+    }
+  }, /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 36 36",
+    xmlns: "http://www.w3.org/2000/svg",
+    style: {
+      width: 36,
+      height: 36
+    }
+  }, /*#__PURE__*/React.createElement("rect", {
+    width: "36",
+    height: "36",
+    rx: "6",
+    fill: "#1A5C2E"
+  }), /*#__PURE__*/React.createElement("text", {
+    x: "10",
+    y: "28",
+    fontFamily: "Georgia, serif",
+    fontSize: "26",
+    fontWeight: "bold",
+    fill: "white"
+  }, "C"), /*#__PURE__*/React.createElement("g", {
+    transform: "translate(17, 3) scale(0.55)"
+  }, /*#__PURE__*/React.createElement("ellipse", {
+    cx: "8",
+    cy: "14",
+    rx: "6",
+    ry: "5",
+    fill: "white"
+  }), /*#__PURE__*/React.createElement("circle", {
+    cx: "8",
+    cy: "7",
+    r: "4",
+    fill: "white"
+  }), /*#__PURE__*/React.createElement("polygon", {
+    points: "12,7 15,6 12,9",
+    fill: "#F59E0B"
+  }), /*#__PURE__*/React.createElement("circle", {
+    cx: "10",
+    cy: "6",
+    r: "0.8",
+    fill: "#1A5C2E"
+  })))), sidebarOpen && /*#__PURE__*/React.createElement("div", {
+    style: {
+      overflow: "hidden"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: "Georgia, serif",
+      fontSize: 15,
+      fontWeight: "bold",
+      color: "white",
+      letterSpacing: 0.5
+    }
+  }, "NidoGestor"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontFamily: "Georgia, serif",
+      fontSize: 13,
+      fontStyle: "italic",
+      color: "rgba(255,255,255,0.9)"
+    }
+  }, "Jornada"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: "rgba(255,255,255,0.5)",
+      marginTop: 1
+    }
+  }, "GH — La Calera"))), /*#__PURE__*/React.createElement("nav", {
+    style: {
+      flex: 1,
+      padding: "12px 8px",
+      display: "flex",
+      flexDirection: "column",
+      gap: 2
+    }
+  }, MENU.map(item => {
+    const active = pagina === item.id;
+    const disabled = !tieneData && item.id !== "importacion";
+    return /*#__PURE__*/React.createElement("button", {
+      key: item.id,
+      onClick: () => !disabled && setPagina(item.id),
+      title: !sidebarOpen ? item.label : "",
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "9px 12px",
+        borderRadius: 8,
+        border: "none",
+        background: active ? "rgba(255,255,255,0.12)" : "transparent",
+        color: active ? "white" : disabled ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.6)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        fontSize: 12.5,
+        fontWeight: active ? 500 : 400,
+        borderLeft: active ? "3px solid rgba(255,255,255,0.7)" : "3px solid transparent",
+        width: "100%",
+        textAlign: "left",
+        whiteSpace: "nowrap",
+        overflow: "hidden"
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 18,
+        flexShrink: 0
+      }
+    }, item.icon), sidebarOpen && /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1
+      }
+    }, item.label));
+  })), sidebarOpen && tieneData && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "12px 16px",
+      borderTop: "1px solid #14472A"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: "rgba(255,255,255,0.5)",
+      marginBottom: 4
+    }
+  }, "Período cargado"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: "rgba(255,255,255,0.85)",
+      fontWeight: 500
+    }
+  }, fmtFecha(datos.periodo.inicioCargado || datos.periodo.inicio), " → ", fmtFecha(datos.periodo.finOriginal)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: "rgba(255,255,255,0.45)",
+      marginTop: 4,
+      marginBottom: 8
+    }
+  }, datos.colaboradores.length, " colaboradores"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: "rgba(255,255,255,0.6)",
+      marginBottom: 4
+    }
+  }, "Período"), /*#__PURE__*/React.createElement("select", {
+    value: perSel,
+    onChange: e => cambiarPeriodo(e.target.value),
+    style: {
+      width: "100%",
+      padding: "5px 8px",
+      border: "0.5px solid rgba(255,255,255,0.3)",
+      borderRadius: 6,
+      fontSize: 12,
+      color: "#fff",
+      background: "rgba(255,255,255,0.1)",
+      cursor: "pointer"
+    }
+  }, periodos.slice().reverse().map(pm => /*#__PURE__*/React.createElement("option", {
+    key: pm.id,
+    value: pm.id,
+    style: { color: "#111" }
+  }, `${pm.label} (${fmtFechaCorta(pm.desde)} → ${fmtFechaCorta(pm.hasta)})${pm.parcial ? " · incompleto" : ""}`)), /*#__PURE__*/React.createElement("option", {
+    value: "acum",
+    style: { color: "#111" }
+  }, "Acumulado (todo lo cargado)"), /*#__PURE__*/React.createElement("option", {
+    value: "pers",
+    style: { color: "#111" }
+  }, "Personalizado…")), perSel === "pers" && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: "rgba(255,255,255,0.6)",
+      marginTop: 8,
+      marginBottom: 4
+    }
+  }, "Desde"), perSel === "pers" && /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: ini || "",
+    min: datos.periodo.inicioCargado || datos.periodo.inicio,
+    max: fechaCorte || "",
+    onChange: e => cambiarDesdePers(e.target.value),
+    style: {
+      width: "100%",
+      padding: "5px 8px",
+      border: "0.5px solid rgba(255,255,255,0.3)",
+      borderRadius: 6,
+      fontSize: 12,
+      color: "#fff",
+      background: "rgba(255,255,255,0.1)",
+      cursor: "pointer"
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: "rgba(255,255,255,0.6)",
+      marginTop: 8,
+      marginBottom: 4
+    }
+  }, perSel === "pers" ? "Hasta (fecha de corte)" : "Fecha de corte"), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: fechaCorte || "",
+    min: ini || datos.periodo.inicio,
+    max: finPer || datos.periodo.finOriginal,
+    onChange: e => e.target.value && cambiarCorte(e.target.value),
+    style: {
+      width: "100%",
+      padding: "5px 8px",
+      border: "0.5px solid rgba(255,255,255,0.3)",
+      borderRadius: 6,
+      fontSize: 12,
+      color: "#fff",
+      background: "rgba(255,255,255,0.1)",
+      cursor: "pointer"
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: "rgba(255,255,255,0.6)",
+      marginTop: 10,
+      marginBottom: 4
+    }
+  }, "Tolerancia de tardanza (min)"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: 0,
+    max: 60,
+    value: tol,
+    onChange: e => cambiarTol(e.target.value),
+    style: {
+      width: "100%",
+      padding: "5px 8px",
+      border: "0.5px solid rgba(255,255,255,0.3)",
+      borderRadius: 6,
+      fontSize: 12,
+      color: "#fff",
+      background: "rgba(255,255,255,0.1)"
+    }
+  }), tol > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: "rgba(255,255,255,0.5)",
+      marginTop: 4
+    }
+  }, `Hasta ${tol} min: no cuenta como tardanza, sí como deuda`), errorGuardado && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: "#FCD34D",
+      marginTop: 8,
+      lineHeight: 1.4
+    }
+  }, errorGuardado === "parcial" ? "⚠ Todo lo cargado no entra en el navegador: se guardó solo el período elegido." : "⚠ Este análisis es muy grande para guardarse en el navegador. Al cerrar tendrás que cargar la carpeta de nuevo."))), /*#__PURE__*/React.createElement("main", {
+    className: "app-main",
+    style: {
+      flex: 1,
+      overflowY: "auto",
+      background: "#F5F5F5"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "24px 28px"
+    }
+  }, pagina === "importacion" && /*#__PURE__*/React.createElement(PaginaImportacion, {
+    onCargado: onCargado,
+    guardado: guardado,
+    onRestaurar: restaurarGuardado,
+    procesando: procesando,
+    setProcesando: setProcesando
+  }), pagina === "dashboard" && tieneData && /*#__PURE__*/React.createElement(PaginaDashboard, {
+    datos: datos,
+    onSelectColab: c => { setColabSel(c); setPagina("colaboradores"); },
+    setPagina: setPagina
+  }), pagina === "gerencias" && tieneData && /*#__PURE__*/React.createElement(PaginaGerencias, {
+    datos: datos,
+    onSelectColab: c => { setColabSel(c); setPagina("colaboradores"); }
+  }), pagina === "causas" && tieneData && /*#__PURE__*/React.createElement(PaginaCausas, {
+    datos: datos
+  }), pagina === "colaboradores" && tieneData && /*#__PURE__*/React.createElement(PaginaColaboradores, {
+    datos: datos,
+    colabInicial: colabSel
+  }), pagina === "kronos" && tieneData && /*#__PURE__*/React.createElement(PaginaKronos, {
+    datos: datos
+  }), pagina === "incidencias" && tieneData && /*#__PURE__*/React.createElement(PaginaIncidencias, {
+    datos: datos,
+    onSelectColab: c => { setColabSel(c); setPagina("colaboradores"); }
+  }), pagina === "diaslibres" && tieneData && /*#__PURE__*/React.createElement(PaginaDiasLibres, {
+    datos: datos,
+    onSelectColab: c => { setColabSel(c); setPagina("colaboradores"); }
+  }), pagina === "comparativo" && tieneData && /*#__PURE__*/React.createElement(PaginaComparativo, {
+    datos: datos,
+    onSelectColab: c => { setColabSel(c); setPagina("colaboradores"); }
+  })), procesando && /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "fixed",
+      inset: 0,
+      background: "rgba(0,0,0,0.3)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 999
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: C.surface,
+      borderRadius: 12,
+      padding: "32px 40px"
+    }
+  }, /*#__PURE__*/React.createElement(Spinner, null)))));
+}
+ReactDOM.render(/*#__PURE__*/React.createElement(App, null), document.getElementById("root"));
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</script>
+</body>
+</html>
